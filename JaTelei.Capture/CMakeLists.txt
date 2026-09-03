@@ -9,6 +9,12 @@ add_library(JaTelei.Capture SHARED
 
 target_include_directories(JaTelei.Capture PRIVATE .)
 
+# Garante Windows 10+ para ID3D11Multithread e outras APIs modernas
+target_compile_definitions(JaTelei.Capture PRIVATE
+    _WIN32_WINNT=0x0A00
+    WINVER=0x0A00
+)
+
 # Windows SDK e Media Foundation
 target_link_libraries(JaTelei.Capture PRIVATE
     d3d11
