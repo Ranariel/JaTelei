@@ -93,6 +93,110 @@
             <Setter Property="Foreground"  Value="#3B82F6"/>
         </Style>
 
+        <!-- ComboBox dark theme -->
+        <Style x:Key="DarkComboBox" TargetType="ComboBox">
+            <Setter Property="Background"       Value="#0D0D0D"/>
+            <Setter Property="Foreground"       Value="#F0F0F0"/>
+            <Setter Property="BorderBrush"      Value="#2A2A2A"/>
+            <Setter Property="BorderThickness"  Value="1"/>
+            <Setter Property="Height"           Value="34"/>
+            <Setter Property="FontSize"         Value="12"/>
+            <Setter Property="Cursor"           Value="Hand"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ComboBoxItem">
+                        <Setter Property="Foreground" Value="#F0F0F0"/>
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Setter Property="Padding"    Value="10,7"/>
+                        <Setter Property="FontSize"   Value="12"/>
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ComboBoxItem">
+                                    <Border x:Name="Bd"
+                                            Background="{TemplateBinding Background}"
+                                            CornerRadius="5" Margin="2,1">
+                                        <ContentPresenter Margin="{TemplateBinding Padding}"
+                                                          VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsHighlighted" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="#0F1A2E"/>
+                                            <Setter Property="Foreground" Value="#3B82F6"/>
+                                        </Trigger>
+                                        <Trigger Property="IsSelected" Value="True">
+                                            <Setter TargetName="Bd" Property="Background" Value="#0F1A2E"/>
+                                            <Setter Property="Foreground" Value="#3B82F6"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ComboBox">
+                        <Grid x:Name="Root">
+                            <Border x:Name="Bd"
+                                    Background="{TemplateBinding Background}"
+                                    BorderBrush="{TemplateBinding BorderBrush}"
+                                    BorderThickness="{TemplateBinding BorderThickness}"
+                                    CornerRadius="7"
+                                    Padding="10,0,32,0">
+                                <ContentPresenter x:Name="ContentSite"
+                                                  IsHitTestVisible="False"
+                                                  Content="{TemplateBinding SelectionBoxItem}"
+                                                  ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                  VerticalAlignment="Center"/>
+                            </Border>
+                            <!-- Arrow icon -->
+                            <TextBlock Text="&#9662;"
+                                       Foreground="#888888"
+                                       FontSize="11"
+                                       IsHitTestVisible="False"
+                                       VerticalAlignment="Center"
+                                       HorizontalAlignment="Right"
+                                       Margin="0,0,10,0"/>
+                            <!-- Invisible toggle to open dropdown -->
+                            <ToggleButton Focusable="False"
+                                          IsChecked="{Binding IsDropDownOpen, Mode=TwoWay,
+                                              RelativeSource={RelativeSource TemplatedParent}}"
+                                          Background="Transparent"
+                                          BorderThickness="0"
+                                          Opacity="0"/>
+                            <Popup x:Name="PART_Popup"
+                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                   AllowsTransparency="True"
+                                   Focusable="False"
+                                   Placement="Bottom">
+                                <Border MinWidth="{TemplateBinding ActualWidth}"
+                                        MaxHeight="280"
+                                        Background="#111111"
+                                        BorderBrush="#3B3B3B"
+                                        BorderThickness="1"
+                                        CornerRadius="7"
+                                        Margin="0,2,0,0">
+                                    <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                        <ItemsPresenter/>
+                                    </ScrollViewer>
+                                </Border>
+                            </Popup>
+                        </Grid>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#3B82F6"/>
+                            </Trigger>
+                            <Trigger Property="IsDropDownOpen" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#3B82F6"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
         <!-- Item da lista (janelas/monitores) -->
         <Style x:Key="ListItemStyle" TargetType="ListBoxItem">
             <Setter Property="Foreground"     Value="#F0F0F0"/>
@@ -135,7 +239,7 @@
                            Foreground="#F0F0F0"
                            VerticalAlignment="Center"/>
                 <Button HorizontalAlignment="Right"
-                        Content="✕"
+                        Content="&#x2715;"
                         Style="{StaticResource BtnGhost}"
                         Padding="6,4"
                         FontSize="13"
@@ -147,7 +251,7 @@
                 <Button x:Name="BtnTela" Style="{StaticResource TypeBtn}"
                         Margin="0,0,8,0" Click="BtnTela_Click">
                     <StackPanel HorizontalAlignment="Center">
-                        <TextBlock Text="🖥️" FontSize="26" HorizontalAlignment="Center"/>
+                        <TextBlock Text="&#x1F5A5;" FontSize="26" HorizontalAlignment="Center"/>
                         <TextBlock Text="Tela" Margin="0,6,0,0"
                                    HorizontalAlignment="Center"
                                    FontSize="12" FontWeight="Medium"/>
@@ -156,7 +260,7 @@
                 <Button x:Name="BtnJanela" Style="{StaticResource TypeBtn}"
                         Margin="4,0" Click="BtnJanela_Click">
                     <StackPanel HorizontalAlignment="Center">
-                        <TextBlock Text="🪟" FontSize="26" HorizontalAlignment="Center"/>
+                        <TextBlock Text="&#x1FA9F;" FontSize="26" HorizontalAlignment="Center"/>
                         <TextBlock Text="Janela" Margin="0,6,0,0"
                                    HorizontalAlignment="Center"
                                    FontSize="12" FontWeight="Medium"/>
@@ -165,7 +269,7 @@
                 <Button x:Name="BtnJogo" Style="{StaticResource TypeBtn}"
                         Margin="8,0,0,0" Click="BtnJogo_Click">
                     <StackPanel HorizontalAlignment="Center">
-                        <TextBlock Text="🎮" FontSize="26" HorizontalAlignment="Center"/>
+                        <TextBlock Text="&#x1F3AE;" FontSize="26" HorizontalAlignment="Center"/>
                         <TextBlock Text="Jogo" Margin="0,6,0,0"
                                    HorizontalAlignment="Center"
                                    FontSize="12" FontWeight="Medium"/>
@@ -224,6 +328,7 @@
                                    FontSize="12"
                                    VerticalAlignment="Center"/>
                         <ComboBox x:Name="CboResolution" Grid.Column="1"
+                                  Style="{StaticResource DarkComboBox}"
                                   SelectionChanged="CboResolution_SelectionChanged"/>
                     </Grid>
 
