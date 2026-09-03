@@ -24,11 +24,16 @@ public partial class MainWindow : Window
         var vm = new LoginViewModel(_api);
         vm.LoginSuccess += async () =>
         {
-            await _signaling.ConnectAsync(_api.Token!);
-
-            // Escuta oferta de compartilhamento recebida de amigos
-            _signaling.OfferReceived += OnOfferReceived;
-
+            try
+            {
+                await _signaling.ConnectAsync(_api.Token!);
+                _signaling.OfferReceived += OnOfferReceived;
+            }
+            catch (Exception ex)
+            {
+                // SignalR falhou mas não bloqueia o app — funcionalidades offline ainda funcionam
+                System.Diagnostics.Debug.WriteLine($"SignalR error: {ex.Message}");
+            }
             ShowFriends();
         };
         MainContent.Content = new LoginView { DataContext = vm };
@@ -50,18 +55,15 @@ public partial class MainWindow : Window
     {
         var webRtc = new WebRtcService();
 
-        // Quando ICE local pronto, envia para o peer
         webRtc.IceCandidateReady += async c =>
             await _signaling.SendIceCandidateAsync(friend.Id.ToString(), c);
 
-        // Quando recebemos a resposta do receiver
         _signaling.AnswerReceived += async (from, sdp) =>
         {
             if (from != friend.Id.ToString()) return;
             await webRtc.SetRemoteAnswerAsync(sdp);
         };
 
-        // Quando receiver nos manda candidato ICE
         _signaling.IceCandidateReceived += async (from, cand) =>
         {
             if (from != friend.Id.ToString()) return;
@@ -71,7 +73,6 @@ public partial class MainWindow : Window
         var offerSdp = await webRtc.CreateOfferAsync();
         await _signaling.SendOfferAsync(friend.Id.ToString(), offerSdp);
 
-        // Aguarda canal abrir (até 15s) e inicia captura
         for (int i = 0; i < 150 && !webRtc.IsDataChannelOpen; i++)
             await Task.Delay(100);
 
