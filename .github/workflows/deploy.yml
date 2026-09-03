@@ -25,13 +25,9 @@ jobs:
       run: |
         cmake -B JaClipei.Capture/build -S JaClipei.Capture -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
         cmake --build JaClipei.Capture/build
-        copy JaClipei.Capture\build\JaClipei.Capture.dll JaClipei.Client\
 
     - name: Publish .NET app
       run: dotnet publish JaClipei.Client/JaClipei.Client.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true -o publish
-
-    - name: Copy DLL to publish folder
-      run: copy JaClipei.Client\JaClipei.Capture.dll publish\
 
     - name: Upload to VPS
       uses: appleboy/scp-action@v0.1.7
