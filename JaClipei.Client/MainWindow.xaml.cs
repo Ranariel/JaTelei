@@ -2,10 +2,10 @@ using System.IO;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using JaClipei.Client.Models;
 using JaClipei.Client.Services;
 using JaClipei.Client.ViewModels;
 using JaClipei.Client.Views;
-using JaClipei.Client.Models;
 
 namespace JaClipei.Client;
 
