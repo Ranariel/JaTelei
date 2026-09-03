@@ -9,14 +9,18 @@ add_library(JaTelei.Capture SHARED
 
 target_include_directories(JaTelei.Capture PRIVATE .)
 
-# Linka com libs do Windows necessárias
+# Windows SDK e Media Foundation
 target_link_libraries(JaTelei.Capture PRIVATE
     d3d11
     dxgi
     dxguid
+    mfplat
+    mf
+    mfuuid
+    evr
 )
 
-# Coloca a DLL na pasta do cliente após build
+# DLL vai direto para a pasta do cliente após build
 set_target_properties(JaTelei.Capture PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/../JaTelei.Client"
     OUTPUT_NAME "JaTelei.Capture"
