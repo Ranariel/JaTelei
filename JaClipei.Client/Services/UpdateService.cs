@@ -2,7 +2,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
-using System.Text;
 using System.Windows;
 
 namespace JaClipei.Client.Services;
@@ -32,35 +31,24 @@ public class UpdateService
 
     public static async Task DownloadAndRestartAsync(UpdateInfo update)
     {
-        var currentExe = Process.GetCurrentProcess().MainModule!.FileName;
+        // Baixa o instalador para %TEMP% (sem acentos no caminho)
+        var tempDir  = Path.GetTempPath();
+        var setupExe = Path.Combine(tempDir, "JaClipeiSetup-update.exe");
 
-        // Baixa para %TEMP% para evitar problemas com acentos no caminho
-        var tempDir = Path.GetTempPath();
-        var newExe = Path.Combine(tempDir, "JaClipei-update.exe");
-        var batPath = Path.Combine(tempDir, "jaclipei_update.bat");
-
-        // Download
         using var response = await _http.GetAsync(update.DownloadUrl, HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
 
         await using (var stream = await response.Content.ReadAsStreamAsync())
-        await using (var file = File.Create(newExe))
+        await using (var file   = File.Create(setupExe))
             await stream.CopyToAsync(file);
 
-        // Bat escrito com encoding ANSI (Windows-1252) para cmd.exe ler corretamente
-        var bat = "@echo off\r\n"
-                + "timeout /t 2 /nobreak >nul\r\n"
-                + $"move /y \"{newExe}\" \"{currentExe}\"\r\n"
-                + $"start \"\" \"{currentExe}\"\r\n"
-                + "del \"%~f0\"\r\n";
-
-        await File.WriteAllTextAsync(batPath, bat, Encoding.Default);
-
-        Process.Start(new ProcessStartInfo(batPath)
+        // Roda o instalador silencioso — ele fecha o app via taskkill e instala o novo exe
+        Process.Start(new ProcessStartInfo(setupExe)
         {
-            UseShellExecute = true,
-            WindowStyle = ProcessWindowStyle.Hidden
+            Arguments       = "/VERYSILENT /NORESTART /CLOSEAPPLICATIONS",
+            UseShellExecute = true
         });
+
         Application.Current.Shutdown();
     }
 }
