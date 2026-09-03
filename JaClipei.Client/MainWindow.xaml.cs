@@ -19,13 +19,9 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        Log("[MainWindow] InitializeComponent OK");
         ShowLogin();
         _ = CheckForUpdateAsync();
     }
-
-    private static void Log(string msg)
-        => File.AppendAllText(LogPath, $"{msg} @ {DateTime.Now:HH:mm:ss}\n");
 
     // ── Atualização ────────────────────────────────────────────────────────
 
@@ -55,10 +51,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            Log("[ShowLogin] criando vm");
             var vm = new LoginViewModel(_api);
-            Log("[ShowLogin] vm OK");
-
             vm.LoginSuccess += async () =>
             {
                 try
@@ -68,20 +61,15 @@ public partial class MainWindow : Window
                 }
                 catch (Exception ex)
                 {
-                    Log($"[SignalR] {ex}");
+                    File.AppendAllText(LogPath, $"[SignalR] {DateTime.Now}: {ex}\n\n");
                 }
                 Dispatcher.Invoke(ShowFriends);
             };
-
-            Log("[ShowLogin] criando view");
-            var view = new LoginView { DataContext = vm };
-            Log("[ShowLogin] view OK, atribuindo content");
-            MainContent.Content = view;
-            Log("[ShowLogin] content atribuido");
+            MainContent.Content = new LoginView { DataContext = vm };
         }
         catch (Exception ex)
         {
-            Log($"[ShowLogin ERRO] {ex}");
+            File.AppendAllText(LogPath, $"[ShowLogin] {DateTime.Now}: {ex}\n\n");
             MainContent.Content = new TextBlock
             {
                 Text = $"ERRO LOGIN: {ex.GetType().Name}\n{ex.Message}",
@@ -108,10 +96,10 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            Log($"[ShowFriends ERRO] {ex}");
+            File.AppendAllText(LogPath, $"[ShowFriends] {DateTime.Now}: {ex}\n\n");
             MainContent.Content = new TextBlock
             {
-                Text = $"ERRO FRIENDS: {ex.GetType().Name}\n{ex.Message}",
+                Text = $"ERRO: {ex.GetType().Name}\n{ex.Message}",
                 Foreground = new SolidColorBrush(Colors.Red),
                 FontSize = 16,
                 VerticalAlignment = VerticalAlignment.Center,
