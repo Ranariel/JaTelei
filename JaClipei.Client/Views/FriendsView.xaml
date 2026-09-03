@@ -1,6 +1,7 @@
 <UserControl x:Class="JaClipei.Client.Views.FriendsView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             Background="#1e1e2e">
     <Grid>
         <Grid.ColumnDefinitions>
             <ColumnDefinition Width="220"/>
@@ -19,8 +20,11 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <TextBox Tag="Apelido do amigo"
+                             Background="#313244" Foreground="#cdd6f4"
+                             CaretBrush="White" BorderBrush="#45475a" Padding="6,4"
                              Text="{Binding AddUsername, UpdateSourceTrigger=PropertyChanged}"/>
                     <Button Grid.Column="1" Content="+" Margin="4,0,0,0"
+                            Background="#89b4fa" Foreground="#1e1e2e" FontWeight="Bold"
                             Command="{Binding AddFriendCommand}"/>
                 </Grid>
                 <TextBlock Text="{Binding StatusMessage}" Foreground="#a6e3a1"
@@ -37,7 +41,7 @@
                         <Border Background="#313244" CornerRadius="4" Margin="0,2" Padding="6">
                             <Grid>
                                 <TextBlock Text="{Binding Username}" Foreground="#cdd6f4"/>
-                                <Button Content="✓" HorizontalAlignment="Right"
+                                <Button Content="\u2713" HorizontalAlignment="Right"
                                         Command="{Binding DataContext.AcceptRequestCommand,
                                                   RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                         CommandParameter="{Binding}"/>
@@ -69,11 +73,11 @@
                             <TextBlock Text="{Binding Username}" Foreground="#cdd6f4"/>
                         </StackPanel>
                     </DataTemplate>
-                </ListBox.ItemTemplate>
+                </ItemsControl.ItemTemplate>
             </ListBox>
         </DockPanel>
 
-        <!-- Painel direito: ação -->
+        <!-- Painel direito -->
         <Grid Grid.Column="1" Background="#181825">
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
                 <TextBlock Text="Selecione um amigo e clique em Compartilhar"
@@ -87,8 +91,9 @@
                         <Run Text="Compartilhar com "/>
                         <Run Text="{Binding SelectedFriend.Username}" FontWeight="Bold"/>
                     </TextBlock>
-                    <Button Content="▶  Iniciar compartilhamento"
+                    <Button Content="&#x25BA;  Iniciar compartilhamento"
                             Command="{Binding ShareScreenCommand}"
+                            Background="#89b4fa" Foreground="#1e1e2e"
                             Padding="16,8" FontSize="14"/>
                 </StackPanel>
             </StackPanel>
