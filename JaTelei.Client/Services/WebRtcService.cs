@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.IO;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -20,8 +21,8 @@ public class WebRtcService : IAsyncDisposable
     private CancellationTokenSource? _cts;
     private MfH264Decoder? _decoder;
 
-    private int _rxWidth  = 1280;
-    private int _rxHeight =  720;
+    private static readonly string LogPath =
+        Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
 
     private static readonly RTCConfiguration Config = new()
     {
@@ -36,14 +37,6 @@ public class WebRtcService : IAsyncDisposable
 
     public bool IsConnected =>
         _pc?.iceConnectionState == RTCIceConnectionState.connected;
-
-    public bool IsVideoTrackReady => _pc != null;
-
-    public void SetReceiveResolution(int width, int height)
-    {
-        _rxWidth  = width;
-        _rxHeight = height;
-    }
 
     // ── P/Invoke GDI (captura de janela/região — fallback quando C++ não é usado) ──
 
@@ -91,17 +84,21 @@ public class WebRtcService : IAsyncDisposable
         _pc = new RTCPeerConnection(Config);
 
         _decoder = new MfH264Decoder();
-        int rxW = _rxWidth, rxH = _rxHeight;
 
         _pc.OnVideoFrameReceived += (IPEndPoint ep, uint ts, byte[] frame, VideoFormat fmt) =>
         {
             try
             {
-                var (bgra, w, h) = _decoder.Decode(frame, rxW, rxH);
+                // Decode() auto-detects resolution from H264 SPS — no fixed size needed
+                var (bgra, w, h) = _decoder.Decode(frame);
                 if (bgra != null)
                     FrameReceived?.Invoke(bgra, w, h);
             }
-            catch { }
+            catch (Exception ex)
+            {
+                File.AppendAllText(LogPath,
+                    $"[WebRTC/Decode] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
+            }
         };
 
         var videoTrack = new MediaStreamTrack(
