@@ -90,7 +90,7 @@ public partial class MainWindow : Window
         try
         {
             var vm = new FriendsViewModel(_api, _signaling);
-            vm.StartShareRequested += friend => _ = StartSendingAsync(friend);
+            vm.StartShareRequested += friend => Dispatcher.Invoke(() => ShowSharePicker(friend));
             _ = vm.LoadCommand.ExecuteAsync(null);
             MainContent.Content = new FriendsView { DataContext = vm };
         }
@@ -110,9 +110,26 @@ public partial class MainWindow : Window
         }
     }
 
+    // ── Share Picker ───────────────────────────────────────────────────────
+
+    private void ShowSharePicker(Friend friend)
+    {
+        try
+        {
+            var dialog = new SharePickerDialog { Owner = this };
+            if (dialog.ShowDialog() == true && dialog.Result is ShareTarget target)
+                _ = StartSendingAsync(friend, target);
+        }
+        catch (Exception ex)
+        {
+            File.AppendAllText(LogPath, $"[SharePicker] {DateTime.Now}: {ex}\n\n");
+            MessageBox.Show($"Erro ao abrir seletor:\n{ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
     // ── Sender side ────────────────────────────────────────────────────────
 
-    private async Task StartSendingAsync(Friend friend)
+    private async Task StartSendingAsync(Friend friend, ShareTarget target)
     {
         var webRtc = new WebRtcService();
 
@@ -138,9 +155,9 @@ public partial class MainWindow : Window
             await Task.Delay(100);
 
         if (webRtc.IsDataChannelOpen)
-            webRtc.StartCapture(fps: 15);
+            webRtc.StartCapture(fps: 15, target: target);
         else
-            MessageBox.Show("Não foi possível conectar. Verifique se o amigo aceitou.", "Erro");
+            MessageBox.Show("Não foi possível conectar. Verifique se o amigo está online e aceitou.", "Erro");
     }
 
     // ── Receiver side ──────────────────────────────────────────────────────
