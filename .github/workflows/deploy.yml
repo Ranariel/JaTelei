@@ -36,7 +36,8 @@ jobs:
         VPS_HOST: ${{ secrets.VPS_HOST }}
       run: |
         $keyPath = "$env:TEMP\deploy_key"
-        $env:SSH_KEY | Out-File -FilePath $keyPath -Encoding ascii -NoNewline
+        $keyContent = $env:SSH_KEY -replace "`r`n", "`n" -replace "`r", "`n"
+        [System.IO.File]::WriteAllText($keyPath, $keyContent)
         icacls $keyPath /inheritance:r /grant:r "${env:USERNAME}:R"
         scp -i $keyPath -o StrictHostKeyChecking=no publish\JaClipei.exe "root@${env:VPS_HOST}:/opt/screenshare/releases/JaClipei-latest.exe"
         Remove-Item $keyPath
