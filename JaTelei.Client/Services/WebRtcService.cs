@@ -37,6 +37,8 @@ public class WebRtcService : IAsyncDisposable
     public bool IsConnected =>
         _pc?.iceConnectionState == RTCIceConnectionState.connected;
 
+    public bool IsVideoTrackReady => _pc != null;
+
     public void SetReceiveResolution(int width, int height)
     {
         _rxWidth  = width;
