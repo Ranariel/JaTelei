@@ -8,9 +8,8 @@
             <ColumnDefinition Width="*"/>
         </Grid.ColumnDefinitions>
 
-        <!-- Painel esquerdo: lista de amigos -->
+        <!-- Painel esquerdo -->
         <DockPanel Grid.Column="0" Background="#1e1e2e">
-            <!-- Adicionar amigo -->
             <StackPanel DockPanel.Dock="Top" Margin="8">
                 <TextBlock Text="Amigos" Foreground="White" FontSize="14"
                            FontWeight="SemiBold" Margin="0,0,0,8"/>
@@ -41,7 +40,7 @@
                         <Border Background="#313244" CornerRadius="4" Margin="0,2" Padding="6">
                             <Grid>
                                 <TextBlock Text="{Binding Username}" Foreground="#cdd6f4"/>
-                                <Button Content="\u2713" HorizontalAlignment="Right"
+                                <Button Content="OK" HorizontalAlignment="Right"
                                         Command="{Binding DataContext.AcceptRequestCommand,
                                                   RelativeSource={RelativeSource AncestorType=ItemsControl}}"
                                         CommandParameter="{Binding}"/>
@@ -73,25 +72,24 @@
                             <TextBlock Text="{Binding Username}" Foreground="#cdd6f4"/>
                         </StackPanel>
                     </DataTemplate>
-                </ItemsControl.ItemTemplate>
+                </ListBox.ItemTemplate>
             </ListBox>
         </DockPanel>
 
         <!-- Painel direito -->
         <Grid Grid.Column="1" Background="#181825">
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center">
-                <TextBlock Text="Selecione um amigo e clique em Compartilhar"
-                           Foreground="#6c7086" FontSize="14" TextWrapping="Wrap"
+                <TextBlock Text="Selecione um amigo para compartilhar a tela"
+                           Foreground="#cdd6f4" FontSize="14" TextWrapping="Wrap"
                            TextAlignment="Center" MaxWidth="260"
                            Visibility="{Binding SelectedFriend, Converter={StaticResource NullToVis}}"/>
-
                 <StackPanel Visibility="{Binding SelectedFriend, Converter={StaticResource NotNullToVis}}">
                     <TextBlock FontSize="16" Foreground="White" TextAlignment="Center"
                                Margin="0,0,0,16">
                         <Run Text="Compartilhar com "/>
                         <Run Text="{Binding SelectedFriend.Username}" FontWeight="Bold"/>
                     </TextBlock>
-                    <Button Content="&#x25BA;  Iniciar compartilhamento"
+                    <Button Content="Iniciar compartilhamento"
                             Command="{Binding ShareScreenCommand}"
                             Background="#89b4fa" Foreground="#1e1e2e"
                             Padding="16,8" FontSize="14"/>
