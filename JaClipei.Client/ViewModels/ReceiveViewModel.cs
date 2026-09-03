@@ -29,41 +29,38 @@ public partial class ReceiveViewModel : ObservableObject, IAsyncDisposable
             await _signaling.SendIceCandidateAsync(_fromUserId, c);
     }
 
-    private void OnFrameReceived(byte[] jpegBytes)
+    /// <summary>Recebe pixels BGRA brutos + dimensões vindos do WebRtcService.</summary>
+    private void OnFrameReceived(byte[] bgra, int width, int height)
     {
         Application.Current.Dispatcher.Invoke(() =>
         {
             try
             {
-                using var ms = new System.IO.MemoryStream(jpegBytes);
-                var dec = BitmapDecoder.Create(ms,
-                    BitmapCreateOptions.PreservePixelFormat,
-                    BitmapCacheOption.OnLoad);
-                var src = dec.Frames[0];
+                // Recria o WriteableBitmap somente se a resolução mudou
+                if (Frame == null ||
+                    Frame.PixelWidth  != width ||
+                    Frame.PixelHeight != height)
+                {
+                    Frame = new WriteableBitmap(
+                        width, height, 96, 96,
+                        PixelFormats.Bgra32, null);
+                }
 
-                if (Frame == null || Frame.PixelWidth != src.PixelWidth || Frame.PixelHeight != src.PixelHeight)
-                    Frame = new WriteableBitmap(src.PixelWidth, src.PixelHeight, 96, 96, PixelFormats.Bgr32, null);
-
-                var converted = new FormatConvertedBitmap(src, PixelFormats.Bgr32, null, 0);
-                int stride = converted.PixelWidth * 4;
-                var pixels = new byte[stride * converted.PixelHeight];
-                converted.CopyPixels(pixels, stride, 0);
-
+                int stride = width * 4;
                 Frame.Lock();
-                Frame.WritePixels(new Int32Rect(0, 0, Frame.PixelWidth, Frame.PixelHeight), pixels, stride, 0);
+                Frame.WritePixels(
+                    new Int32Rect(0, 0, width, height),
+                    bgra, stride, 0);
                 Frame.Unlock();
 
-                StatusText = $"Recebendo — {converted.PixelWidth}×{converted.PixelHeight}";
+                StatusText = $"Recebendo — {width}×{height}";
             }
-            catch { /* frame inválido */ }
+            catch { /* frame inválido — ignora */ }
         });
     }
 
     [RelayCommand]
-    private void Stop()
-    {
-        StopRequested?.Invoke();
-    }
+    private void Stop() => StopRequested?.Invoke();
 
     public async ValueTask DisposeAsync()
     {

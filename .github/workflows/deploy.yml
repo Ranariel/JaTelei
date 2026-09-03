@@ -36,6 +36,12 @@ jobs:
     - name: Publish .NET app
       run: dotnet publish JaClipei.Client/JaClipei.Client.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true -o publish
 
+    - name: Copy C++ DLL into publish folder
+      run: |
+        if (Test-Path "JaClipei.Client/JaClipei.Capture.dll") {
+          Copy-Item "JaClipei.Client/JaClipei.Capture.dll" -Destination "publish/"
+        }
+
     - name: Rename exe with version
       run: Rename-Item publish\JaClipei.exe "JaClipei-${{ env.VERSION }}.exe"
 

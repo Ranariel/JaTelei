@@ -40,6 +40,7 @@ Name: "desktopicon"; Description: "Criar ícone na Área de Trabalho"; GroupDesc
 
 [Files]
 Source: "..\publish\{#MyExeName}"; DestDir: "{app}"; DestName: "JaClipei.exe"; Flags: ignoreversion
+Source: "..\publish\JaClipei.Capture.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\JaClipei";             Filename: "{app}\JaClipei.exe"
