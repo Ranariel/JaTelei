@@ -12,6 +12,7 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="32"/>
+            <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
         </Grid.RowDefinitions>
 
@@ -29,7 +30,22 @@
             </Grid>
         </Border>
 
-        <!-- Conteúdo principal: troca entre Login e Friends -->
-        <ContentControl Grid.Row="1" x:Name="MainContent"/>
+        <!-- Barra de update (oculta por padrão) -->
+        <Border Grid.Row="1" x:Name="UpdateBanner" Background="#313244"
+                Visibility="Collapsed" Padding="12,8">
+            <DockPanel>
+                <Button DockPanel.Dock="Right" x:Name="UpdateButton"
+                        Content="Atualizar agora" Click="UpdateButton_Click"
+                        WindowChrome.IsHitTestVisibleInChrome="True"
+                        Background="#89b4fa" Foreground="#1e1e2e"
+                        BorderThickness="0" Padding="12,4" FontWeight="SemiBold"/>
+                <TextBlock x:Name="UpdateText" Foreground="#cdd6f4"
+                           VerticalAlignment="Center"
+                           Text="Nova versão disponível!"/>
+            </DockPanel>
+        </Border>
+
+        <!-- Conteúdo principal -->
+        <ContentControl Grid.Row="2" x:Name="MainContent"/>
     </Grid>
 </Window>

@@ -10,11 +10,45 @@ public partial class MainWindow : Window
 {
     private readonly ApiService _api = new();
     private readonly SignalingService _signaling = new();
+    private UpdateService.UpdateInfo? _pendingUpdate;
 
     public MainWindow()
     {
         InitializeComponent();
         ShowLogin();
+        _ = CheckForUpdateAsync();
+    }
+
+    // ── Auto-update ────────────────────────────────────────────────────────
+
+    private async Task CheckForUpdateAsync()
+    {
+        var update = await UpdateService.CheckAsync(AppVersion.Current);
+        if (update is null) return;
+
+        _pendingUpdate = update;
+        Dispatcher.Invoke(() =>
+        {
+            UpdateText.Text = $"Nova versão {update.Version} disponível!";
+            UpdateBanner.Visibility = Visibility.Visible;
+        });
+    }
+
+    private async void UpdateButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (_pendingUpdate is null) return;
+        UpdateButton.IsEnabled = false;
+        UpdateButton.Content = "Baixando...";
+        try
+        {
+            await UpdateService.DownloadAndRestartAsync(_pendingUpdate);
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show($"Erro ao atualizar: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+            UpdateButton.IsEnabled = true;
+            UpdateButton.Content = "Atualizar agora";
+        }
     }
 
     // ── Login ──────────────────────────────────────────────────────────────
@@ -31,7 +65,6 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
-                // SignalR falhou mas não bloqueia o app — funcionalidades offline ainda funcionam
                 System.Diagnostics.Debug.WriteLine($"SignalR error: {ex.Message}");
             }
             ShowFriends();
@@ -95,7 +128,6 @@ public partial class MainWindow : Window
                 MessageBoxImage.Question);
 
             if (result != MessageBoxResult.Yes) return;
-
             _ = StartReceivingAsync(fromUserId, offerSdp);
         });
     }
