@@ -151,9 +151,6 @@ public partial class MainWindow : Window
         var offerSdp = await webRtc.CreateOfferAsync();
         await _signaling.SendOfferAsync(friend.Id.ToString(), offerSdp);
 
-        for (int i = 0; i < 150 && !webRtc.IsVideoTrackReady; i++)
-            await Task.Delay(100);
-
         // Inicia captura; o loop interno envia assim que a conexão ICE estiver pronta
         webRtc.StartCapture(target: target);
     }
