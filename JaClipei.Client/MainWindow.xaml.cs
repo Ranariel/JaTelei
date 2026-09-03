@@ -1,4 +1,7 @@
+using System.IO;
 using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Media;
 using JaClipei.Client.Services;
 using JaClipei.Client.ViewModels;
 using JaClipei.Client.Views;
@@ -19,13 +22,12 @@ public partial class MainWindow : Window
         _ = CheckForUpdateAsync();
     }
 
-    // ── Auto-update ────────────────────────────────────────────────────────
+    // ── Atualização ────────────────────────────────────────────────────────
 
     private async Task CheckForUpdateAsync()
     {
         var update = await UpdateService.CheckAsync(AppVersion.Current);
         if (update is null) return;
-
         _pendingUpdate = update;
         Dispatcher.Invoke(() =>
         {
@@ -38,17 +40,8 @@ public partial class MainWindow : Window
     {
         if (_pendingUpdate is null) return;
         UpdateButton.IsEnabled = false;
-        UpdateButton.Content = "Baixando...";
-        try
-        {
-            await UpdateService.DownloadAndRestartAsync(_pendingUpdate);
-        }
-        catch (Exception ex)
-        {
-            MessageBox.Show($"Erro ao atualizar: {ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
-            UpdateButton.IsEnabled = true;
-            UpdateButton.Content = "Atualizar agora";
-        }
+        UpdateText.Text = "Baixando atualização...";
+        await UpdateService.DownloadAndRestartAsync(_pendingUpdate);
     }
 
     // ── Login ──────────────────────────────────────────────────────────────
@@ -65,9 +58,11 @@ public partial class MainWindow : Window
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"SignalR error: {ex.Message}");
+                File.AppendAllText(
+                    Path.Combine(Path.GetTempPath(), "jaclipei_error.txt"),
+                    $"[SignalR] {DateTime.Now}: {ex}\n\n");
             }
-            ShowFriends();
+            Dispatcher.Invoke(ShowFriends);
         };
         MainContent.Content = new LoginView { DataContext = vm };
     }
@@ -76,10 +71,30 @@ public partial class MainWindow : Window
 
     private void ShowFriends()
     {
-        var vm = new FriendsViewModel(_api, _signaling);
-        vm.StartShareRequested += friend => _ = StartSendingAsync(friend);
-        _ = vm.LoadCommand.ExecuteAsync(null);
-        MainContent.Content = new FriendsView { DataContext = vm };
+        try
+        {
+            var vm = new FriendsViewModel(_api, _signaling);
+            vm.StartShareRequested += friend => _ = StartSendingAsync(friend);
+            _ = vm.LoadCommand.ExecuteAsync(null);
+            MainContent.Content = new FriendsView { DataContext = vm };
+        }
+        catch (Exception ex)
+        {
+            File.AppendAllText(
+                Path.Combine(Path.GetTempPath(), "jaclipei_error.txt"),
+                $"[ShowFriends] {DateTime.Now}: {ex}\n\n");
+
+            MainContent.Content = new TextBlock
+            {
+                Text = $"ERRO: {ex.Message}",
+                Foreground = new SolidColorBrush(Colors.Red),
+                FontSize = 18,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(20)
+            };
+        }
     }
 
     // ── Sender side ────────────────────────────────────────────────────────
@@ -112,7 +127,7 @@ public partial class MainWindow : Window
         if (webRtc.IsDataChannelOpen)
             webRtc.StartCapture(fps: 15);
         else
-            MessageBox.Show("Não foi possível conectar com o amigo. Verifique se ele aceitou.", "Erro");
+            MessageBox.Show("Não foi possível conectar. Verifique se o amigo aceitou.", "Erro");
     }
 
     // ── Receiver side ──────────────────────────────────────────────────────
@@ -122,7 +137,7 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() =>
         {
             var result = MessageBox.Show(
-                $"Um amigo quer compartilhar a tela com você.\nAceitar?",
+                "Um amigo quer compartilhar a tela com você.\nAceitar?",
                 "Compartilhamento recebido",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question);
