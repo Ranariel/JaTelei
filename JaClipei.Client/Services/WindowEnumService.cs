@@ -6,9 +6,9 @@ namespace JaClipei.Client.Services;
 
 public class WindowInfo
 {
-    public IntPtr Handle    { get; init; }
-    public string Title     { get; init; } = "";
-    public string Process   { get; init; } = "";
+    public IntPtr Handle  { get; init; }
+    public string Title   { get; init; } = "";
+    public string Process { get; init; } = "";
     public override string ToString() => Title;
 }
 
@@ -17,13 +17,13 @@ public class MonitorInfo
     public int    Index       { get; init; }
     public string DisplayName { get; init; } = "";
     public System.Windows.Rect Bounds { get; init; }
-    public bool   IsPrimary  { get; init; }
+    public bool   IsPrimary   { get; init; }
     public override string ToString() => DisplayName;
 }
 
 public static class WindowEnumService
 {
-    // ── P/Invoke ──────────────────────────────────────────────────────────
+    // ── P/Invoke janelas ──────────────────────────────────────────────────
 
     private delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
 
@@ -34,7 +34,31 @@ public static class WindowEnumService
     static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] static extern IntPtr GetShellWindow();
-    [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+
+    // ── P/Invoke monitores ────────────────────────────────────────────────
+
+    private delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData);
+
+    [DllImport("user32.dll")]
+    static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFOEX lpmi);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MONITORINFOEX
+    {
+        public int    cbSize;
+        public RECT   rcMonitor;
+        public RECT   rcWork;
+        public uint   dwFlags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string szDevice;
+    }
+    private const uint MONITORINFOF_PRIMARY = 1;
 
     // ── Janelas ───────────────────────────────────────────────────────────
 
@@ -46,9 +70,9 @@ public static class WindowEnumService
 
         EnumWindows((hWnd, _) =>
         {
-            if (hWnd == shell)         return true;
+            if (hWnd == shell)          return true;
             if (!IsWindowVisible(hWnd)) return true;
-            if (IsIconic(hWnd))         return true;   // minimizada
+            if (IsIconic(hWnd))         return true;
 
             var sb = new StringBuilder(256);
             if (GetWindowText(hWnd, sb, 256) == 0) return true;
@@ -59,7 +83,7 @@ public static class WindowEnumService
             if (excludeSelf && pid == selfPid) return true;
 
             string procName = "";
-            try { procName = Process.GetProcessById((int)pid).ProcessName; } catch { }
+            try { procName = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; } catch { }
 
             result.Add(new WindowInfo { Handle = hWnd, Title = title, Process = procName });
             return true;
@@ -68,23 +92,33 @@ public static class WindowEnumService
         return result;
     }
 
-    // ── Monitores ─────────────────────────────────────────────────────────
+    // ── Monitores (sem WinForms) ──────────────────────────────────────────
 
     public static List<MonitorInfo> GetMonitors()
     {
-        var screens = System.Windows.Forms.Screen.AllScreens;
-        var list    = new List<MonitorInfo>();
-        for (int i = 0; i < screens.Length; i++)
+        var list  = new List<MonitorInfo>();
+        int index = 0;
+
+        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (hMon, _, ref rc, _) =>
         {
-            var s = screens[i];
-            list.Add(new MonitorInfo
+            var info = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>() };
+            if (GetMonitorInfo(hMon, ref info))
             {
-                Index       = i,
-                DisplayName = s.Primary ? $"Monitor {i + 1} (Principal)" : $"Monitor {i + 1}",
-                Bounds      = new System.Windows.Rect(s.Bounds.X, s.Bounds.Y, s.Bounds.Width, s.Bounds.Height),
-                IsPrimary   = s.Primary
-            });
-        }
+                bool primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
+                list.Add(new MonitorInfo
+                {
+                    Index       = index++,
+                    DisplayName = primary ? $"Monitor {index} (Principal)" : $"Monitor {index}",
+                    Bounds      = new System.Windows.Rect(
+                        info.rcMonitor.Left, info.rcMonitor.Top,
+                        info.rcMonitor.Right  - info.rcMonitor.Left,
+                        info.rcMonitor.Bottom - info.rcMonitor.Top),
+                    IsPrimary   = primary
+                });
+            }
+            return true;
+        }, IntPtr.Zero);
+
         return list;
     }
 }
