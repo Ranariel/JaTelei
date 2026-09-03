@@ -54,7 +54,10 @@ jobs:
         mkdir -p ~/.ssh
         printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
         chmod 600 ~/.ssh/deploy_key
-        ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
+        echo "Host $VPS_HOST" >> ~/.ssh/config
+        echo "  StrictHostKeyChecking no" >> ~/.ssh/config
+        echo "  UserKnownHostsFile /dev/null" >> ~/.ssh/config
+        chmod 600 ~/.ssh/config
     - name: Upload to VPS
       run: |
         scp -i ~/.ssh/deploy_key "JaClipei-${VERSION}.exe" root@"$VPS_HOST":/opt/screenshare/releases/
