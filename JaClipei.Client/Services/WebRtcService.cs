@@ -2,13 +2,14 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text.Json;
+using System.Windows;
 using SIPSorcery.Net;
 
 namespace JaClipei.Client.Services;
 
 /// <summary>
 /// WebRTC peer-to-peer via SIPSorcery.
-/// Vídeo = frames JPEG enviados por DataChannel (sem necessidade de codec nativo).
+/// Vídeo = frames JPEG enviados por DataChannel.
 /// </summary>
 public class WebRtcService : IAsyncDisposable
 {
@@ -24,22 +25,32 @@ public class WebRtcService : IAsyncDisposable
         }
     };
 
-    /// <summary>Frame JPEG recebido pelo viewer.</summary>
     public event Action<byte[]>? FrameReceived;
-    /// <summary>Candidato ICE local serializado em JSON — enviar via SignalR.</summary>
     public event Action<string>? IceCandidateReady;
 
     public bool IsDataChannelOpen => _dc?.readyState == RTCDataChannelState.open;
 
-    // ── Sender (quem compartilha) ──────────────────────────────────────────
+    // ── P/Invoke para captura de janela ───────────────────────────────────
+
+    [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
+    [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
+    [DllImport("gdi32.dll")]  static extern bool BitBlt(IntPtr dst, int dx, int dy, int dw, int dh,
+                                                         IntPtr src, int sx, int sy, uint rop);
+    [DllImport("user32.dll")] static extern IntPtr GetWindowDC(IntPtr h);
+    [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr hdc);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+
+    private const uint PW_RENDERFULLCONTENT = 0x00000002;
+
+    // ── Sender ────────────────────────────────────────────────────────────
 
     public async Task<string> CreateOfferAsync()
     {
         _pc = new RTCPeerConnection(Config);
         _dc = await _pc.createDataChannel("screenshare");
-
         _pc.onicecandidate += c => IceCandidateReady?.Invoke(c.toJSON());
-
         var offer = _pc.createOffer();
         _pc.setLocalDescription(offer);
         return offer.sdp;
@@ -51,20 +62,17 @@ public class WebRtcService : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    // ── Receiver (quem assiste) ────────────────────────────────────────────
+    // ── Receiver ──────────────────────────────────────────────────────────
 
     public Task<string> CreateAnswerAsync(string offerSdp)
     {
         _pc = new RTCPeerConnection(Config);
-
         _pc.ondatachannel += ch =>
         {
             _dc = ch;
             ch.onmessage += (_, _, data) => FrameReceived?.Invoke(data);
         };
-
         _pc.onicecandidate += c => IceCandidateReady?.Invoke(c.toJSON());
-
         _pc.setRemoteDescription(new RTCSessionDescriptionInit { type = RTCSdpType.offer, sdp = offerSdp });
         var answer = _pc.createAnswer();
         _pc.setLocalDescription(answer);
@@ -81,9 +89,15 @@ public class WebRtcService : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    // ── Captura (sender) ──────────────────────────────────────────────────
+    // ── Captura ───────────────────────────────────────────────────────────
 
-    public void StartCapture(int fps = 15)
+    /// <summary>
+    /// Inicia captura.
+    /// target = null → tela completa (via ScreenCaptureService/DLL)
+    /// target.WindowHandle != 0 → captura janela específica (GDI PrintWindow)
+    /// target.MonitorBounds != null → captura monitor específico (GDI BitBlt)
+    /// </summary>
+    public void StartCapture(int fps = 15, ShareTarget? target = null)
     {
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
@@ -91,7 +105,10 @@ public class WebRtcService : IAsyncDisposable
 
         Task.Run(async () =>
         {
-            ScreenCaptureService.Initialize();
+            bool useNative = target is null || (target.WindowHandle == IntPtr.Zero && target.MonitorBounds is null);
+
+            if (useNative) ScreenCaptureService.Initialize();
+
             while (!token.IsCancellationRequested)
             {
                 var t0 = DateTime.UtcNow;
@@ -99,8 +116,23 @@ public class WebRtcService : IAsyncDisposable
                 {
                     if (IsDataChannelOpen)
                     {
-                        var raw = ScreenCaptureService.CaptureFrame(out int w, out int h);
-                        if (raw != null)
+                        byte[]? raw = null;
+                        int w = 0, h = 0;
+
+                        if (useNative)
+                        {
+                            raw = ScreenCaptureService.CaptureFrame(out w, out h);
+                        }
+                        else if (target!.WindowHandle != IntPtr.Zero)
+                        {
+                            raw = CaptureWindow(target.WindowHandle, out w, out h);
+                        }
+                        else if (target!.MonitorBounds is System.Windows.Rect bounds)
+                        {
+                            raw = CaptureRegion((int)bounds.X, (int)bounds.Y, (int)bounds.Width, (int)bounds.Height, out w, out h);
+                        }
+
+                        if (raw != null && w > 0 && h > 0)
                             _dc!.send(BgraToJpeg(raw, w, h));
                     }
                 }
@@ -110,7 +142,8 @@ public class WebRtcService : IAsyncDisposable
                 if (wait > TimeSpan.Zero)
                     await Task.Delay(wait, token).ConfigureAwait(false);
             }
-            ScreenCaptureService.Shutdown();
+
+            if (useNative) ScreenCaptureService.Shutdown();
         }, token);
     }
 
@@ -118,6 +151,48 @@ public class WebRtcService : IAsyncDisposable
     {
         _cts?.Cancel();
         _cts = null;
+    }
+
+    // ── Captura GDI de janela ─────────────────────────────────────────────
+
+    private static byte[] CaptureWindow(IntPtr hwnd, out int width, out int height)
+    {
+        GetWindowRect(hwnd, out var rect);
+        width  = rect.Right  - rect.Left;
+        height = rect.Bottom - rect.Top;
+
+        if (width <= 0 || height <= 0) { width = 1; height = 1; return new byte[4]; }
+
+        using var bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(bmp))
+        {
+            var hdc = g.GetHdc();
+            PrintWindow(hwnd, hdc, PW_RENDERFULLCONTENT);
+            g.ReleaseHdc(hdc);
+        }
+        return BitmapToBgra(bmp, width, height);
+    }
+
+    private static byte[] CaptureRegion(int x, int y, int w, int h, out int width, out int height)
+    {
+        width  = w;
+        height = h;
+        if (w <= 0 || h <= 0) { width = 1; height = 1; return new byte[4]; }
+
+        using var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+        using (var g = Graphics.FromImage(bmp))
+            g.CopyFromScreen(x, y, 0, 0, new System.Drawing.Size(w, h));
+
+        return BitmapToBgra(bmp, w, h);
+    }
+
+    private static byte[] BitmapToBgra(Bitmap bmp, int w, int h)
+    {
+        var bd = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        var bytes = new byte[Math.Abs(bd.Stride) * h];
+        Marshal.Copy(bd.Scan0, bytes, 0, bytes.Length);
+        bmp.UnlockBits(bd);
+        return bytes;
     }
 
     // ── Encoder BGRA → JPEG ───────────────────────────────────────────────
