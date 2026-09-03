@@ -3,6 +3,10 @@
 //                   → MFT Hardware H264 Encoder → H264 Annex B
 // Zero cópias CPU até o output H264. Usa NVENC/QuickSync/AMF quando disponível.
 
+// Precisa estar antes de qualquer include do Windows SDK
+#define _WIN32_WINNT 0x0A00
+#define WINVER       0x0A00
+
 #define JACLIPEI_CAPTURE_EXPORTS
 #include "capture.h"
 
@@ -13,16 +17,19 @@
 #include <mftransform.h>
 #include <mfidl.h>
 #include <mferror.h>
+#include <evr.h>
 #include <codecapi.h>
 #include <wrl/client.h>
 #include <vector>
 #include <cstring>
+#include <algorithm>
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
 #pragma comment(lib, "mfplat.lib")
 #pragma comment(lib, "mf.lib")
 #pragma comment(lib, "mfuuid.lib")
+#pragma comment(lib, "evr.lib")
 
 using Microsoft::WRL::ComPtr;
 
@@ -245,7 +252,7 @@ int JC_Init(int adapterIndex, int outputIndex,
 
     // Multithread protection (MFT pode usar em outra thread)
     ComPtr<ID3D11Multithread> mt;
-    if (SUCCEEDED(g_device.As(&mt))) mt->SetMultithreadProtected(TRUE);
+    if (SUCCEEDED(g_ctx->QueryInterface(IID_PPV_ARGS(&mt)))) mt->SetMultithreadProtected(TRUE);
 
     // DXGI Output Duplication
     ComPtr<IDXGIOutput> output;
@@ -435,7 +442,7 @@ static HRESULT EncodeNV12(uint8_t* outBuffer, int bufferSize, int* outLen)
         smp->GetBufferByIndex(i, &mb);
         BYTE* data = nullptr; DWORD len = 0;
         mb->Lock(&data, nullptr, &len);
-        int copy = min((int)len, bufferSize - offset);
+        int copy = (std::min)((int)len, bufferSize - offset);
         memcpy(outBuffer + offset, data, copy);
         offset += copy;
         mb->Unlock();
