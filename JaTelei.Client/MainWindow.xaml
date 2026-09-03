@@ -1,7 +1,7 @@
 <Window x:Class="JaTelei.Client.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="Ja Telei" Height="560" Width="820"
+        Icon="Resources/app.ico" Title="Ja Telei" Height="560" Width="820"
         Background="#000000" WindowStyle="None"
         ResizeMode="CanResize"
         FontFamily="Segoe UI">
