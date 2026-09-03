@@ -51,7 +51,7 @@ Name: "{commondesktop}\Ja Telei";     Filename: "{app}\JaTelei.exe"; Tasks: desk
 Root: HKLM; Subkey: "Software\JaTelei"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletekey
 
 [Run]
-Filename: "{app}\JaTelei.exe"; Description: "Iniciar Ja Telei agora"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\JaTelei.exe"; Description: "Iniciar Ja Telei agora"; Flags: nowait postinstall
 
 [UninstallRun]
 Filename: "taskkill.exe"; Parameters: "/F /IM JaTelei.exe"; Flags: runhidden; RunOnceId: "KillApp"
