@@ -1,4 +1,4 @@
-name: Build & Deploy JaClipei
+name: Build & Deploy JaTelei
 
 on:
   push:
@@ -23,40 +23,40 @@ jobs:
 
     - name: Build C++ Capture DLL
       run: |
-        cmake -B JaClipei.Capture/build -S JaClipei.Capture -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
-        cmake --build JaClipei.Capture/build
+        cmake -B JaTelei.Capture/build -S JaTelei.Capture -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
+        cmake --build JaTelei.Capture/build
 
     - name: Set version
       run: echo "VERSION=1.0.${{ github.run_number }}" >> $env:GITHUB_ENV
 
     - name: Patch AppVersion.cs
       run: |
-        (Get-Content JaClipei.Client/AppVersion.cs) -replace '"1\.0\.0"', '"${{ env.VERSION }}"' | Set-Content JaClipei.Client/AppVersion.cs
+        (Get-Content JaTelei.Client/AppVersion.cs) -replace '"1\.0\.0"', '"${{ env.VERSION }}"' | Set-Content JaTelei.Client/AppVersion.cs
 
     - name: Publish .NET app
-      run: dotnet publish JaClipei.Client/JaClipei.Client.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true -o publish
+      run: dotnet publish JaTelei.Client/JaTelei.Client.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true -o publish
 
     - name: Copy C++ DLL into publish folder
       run: |
-        if (Test-Path "JaClipei.Client/JaClipei.Capture.dll") {
-          Copy-Item "JaClipei.Client/JaClipei.Capture.dll" -Destination "publish/"
+        if (Test-Path "JaTelei.Client/JaTelei.Capture.dll") {
+          Copy-Item "JaTelei.Client/JaTelei.Capture.dll" -Destination "publish/"
         }
 
     - name: Rename exe with version
-      run: Rename-Item publish\JaClipei.exe "JaClipei-${{ env.VERSION }}.exe"
+      run: Rename-Item publish\JaTelei.exe "JaTelei-${{ env.VERSION }}.exe"
 
     - name: Build Inno Setup installer
       run: |
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
           /DMyAppVersion="${{ env.VERSION }}" `
-          /DMyExeName="JaClipei-${{ env.VERSION }}.exe" `
-          setup\JaClipei.iss
+          /DMyExeName="JaTelei-${{ env.VERSION }}.exe" `
+          setup\JaTelei.iss
 
     - name: Upload installer artifact
       uses: actions/upload-artifact@v4
       with:
-        name: JaClipei
-        path: installer/JaClipeiSetup-${{ env.VERSION }}.exe
+        name: JaTelei
+        path: installer/JaTeleiSetup-${{ env.VERSION }}.exe
 
   deploy:
     needs: build
@@ -69,7 +69,7 @@ jobs:
     - name: Download artifact
       uses: actions/download-artifact@v4
       with:
-        name: JaClipei
+        name: JaTelei
 
     - name: Setup SSH
       run: |
@@ -83,12 +83,12 @@ jobs:
 
     - name: Upload installer to VPS
       run: |
-        scp -i ~/.ssh/deploy_key "JaClipeiSetup-${VERSION}.exe" root@"$VPS_HOST":/opt/screenshare/releases/
+        scp -i ~/.ssh/deploy_key "JaTeleiSetup-${VERSION}.exe" root@"$VPS_HOST":/opt/screenshare/releases/
 
     - name: Remove old releases (keep last 3)
       run: |
         ssh -i ~/.ssh/deploy_key root@"$VPS_HOST" \
-          "ls -t /opt/screenshare/releases/JaClipeiSetup-1.*.exe 2>/dev/null | tail -n +4 | xargs rm -f"
+          "ls -t /opt/screenshare/releases/JaTeleiSetup-1.*.exe 2>/dev/null | tail -n +4 | xargs rm -f"
 
     - name: Update latest version on VPS
       run: |
