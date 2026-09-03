@@ -21,23 +21,43 @@ public class ApiService
     public record RegisterResult(Guid Id, string Username);
     public record PendingRequest(Guid Id, string Username, DateTime CreatedAt);
 
-    public async Task<LoginResult?> LoginAsync(string email, string password)
+    public async Task<(LoginResult? Result, string? Error)> LoginAsync(string username, string password)
     {
-        var res = await _http.PostAsJsonAsync($"{Base}/auth/login", new { email, password });
-        if (!res.IsSuccessStatusCode) return null;
+        var res = await _http.PostAsJsonAsync($"{Base}/auth/login", new { username, password });
+        if (!res.IsSuccessStatusCode)
+        {
+            var err = await TryReadError(res);
+            return (null, err ?? "Apelido ou senha incorretos.");
+        }
         var result = await res.Content.ReadFromJsonAsync<LoginResult>();
         Token = result?.Token;
         UserId = result?.Id;
         Username = result?.Username;
         SetAuth();
-        return result;
+        return (result, null);
     }
 
-    public async Task<RegisterResult?> RegisterAsync(string username, string email, string password)
+    public async Task<(RegisterResult? Result, string? Error)> RegisterAsync(string username, string? email, string password)
     {
         var res = await _http.PostAsJsonAsync($"{Base}/auth/register", new { username, email, password });
-        if (!res.IsSuccessStatusCode) return null;
-        return await res.Content.ReadFromJsonAsync<RegisterResult>();
+        if (!res.IsSuccessStatusCode)
+        {
+            var err = await TryReadError(res);
+            return (null, err ?? "Erro ao criar conta.");
+        }
+        var result = await res.Content.ReadFromJsonAsync<RegisterResult>();
+        return (result, null);
+    }
+
+    private static async Task<string?> TryReadError(HttpResponseMessage res)
+    {
+        try
+        {
+            var obj = await res.Content.ReadFromJsonAsync<System.Text.Json.JsonElement>();
+            if (obj.TryGetProperty("error", out var err)) return err.GetString();
+        }
+        catch { }
+        return null;
     }
 
     public async Task<List<Friend>> GetFriendsAsync()
