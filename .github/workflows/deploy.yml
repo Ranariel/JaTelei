@@ -43,11 +43,12 @@ jobs:
       with:
         name: JaClipei
 
+    - name: Setup SSH
+      run: |
+        mkdir -p ~/.ssh
+        echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+
     - name: Upload to VPS
-      uses: appleboy/scp-action@v0.1.7
-      with:
-        host: ${{ secrets.VPS_HOST }}
-        username: root
-        key: ${{ secrets.VPS_SSH_KEY }}
-        source: "JaClipei.exe"
-        target: "/opt/screenshare/releases/"
+      run: scp -i ~/.ssh/deploy_key JaClipei.exe root@${{ secrets.VPS_HOST }}:/opt/screenshare/releases/JaClipei-latest.exe
