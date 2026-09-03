@@ -3,6 +3,7 @@ name: Build & Deploy JaClipei
 on:
   push:
     branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
@@ -61,3 +62,7 @@ jobs:
       run: |
         ssh -i ~/.ssh/deploy_key root@"$VPS_HOST" \
           "ls -t /opt/screenshare/releases/JaClipei-1.*.exe 2>/dev/null | tail -n +4 | xargs rm -f"
+    - name: Update latest version on VPS
+      run: |
+        ssh -i ~/.ssh/deploy_key root@"$VPS_HOST" \
+          "echo ${VERSION} > /opt/screenshare/latest_version.txt"
