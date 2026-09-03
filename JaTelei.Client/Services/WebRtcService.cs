@@ -21,6 +21,10 @@ public class WebRtcService : IAsyncDisposable
     private CancellationTokenSource? _cts;
     private MfH264Decoder? _decoder;
 
+    // Candidatos ICE que chegam antes de _pc ser criado são enfileirados aqui
+    private readonly List<RTCIceCandidateInit> _pendingCandidates = new();
+    private readonly object _candidateLock = new();
+
     private static readonly string LogPath =
         Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
 
@@ -28,7 +32,8 @@ public class WebRtcService : IAsyncDisposable
     {
         iceServers = new List<RTCIceServer>
         {
-            new() { urls = "stun:stun.l.google.com:19302" }
+            new() { urls = "stun:stun.l.google.com:19302" },
+            new() { urls = "stun:stun1.l.google.com:19302" }
         }
     };
 
@@ -58,10 +63,20 @@ public class WebRtcService : IAsyncDisposable
             MediaStreamStatusEnum.SendOnly);
         _pc.addTrack(videoTrack);
 
-        _pc.onicecandidate += c => IceCandidateReady?.Invoke(c.toJSON());
+        _pc.onicecandidate += c =>
+        {
+            var json = c.toJSON();
+            File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: candidato local: {json}\n");
+            IceCandidateReady?.Invoke(json);
+        };
+        _pc.oniceconnectionstatechange += state =>
+            File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: iceState={state}\n");
+        _pc.onconnectionstatechange += state =>
+            File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: connState={state}\n");
 
         var offer = _pc.createOffer();
         _pc.setLocalDescription(offer);
+        File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: offer criado, ICE gathering iniciado\n");
         return await Task.FromResult(offer.sdp);
     }
 
@@ -89,7 +104,6 @@ public class WebRtcService : IAsyncDisposable
         {
             try
             {
-                // Decode() auto-detects resolution from H264 SPS — no fixed size needed
                 var (bgra, w, h) = _decoder.Decode(frame);
                 if (bgra != null)
                     FrameReceived?.Invoke(bgra, w, h);
@@ -106,7 +120,17 @@ public class WebRtcService : IAsyncDisposable
             MediaStreamStatusEnum.RecvOnly);
         _pc.addTrack(videoTrack);
 
-        _pc.onicecandidate += c => IceCandidateReady?.Invoke(c.toJSON());
+        _pc.onicecandidate += c =>
+        {
+            var json = c.toJSON();
+            File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: candidato local: {json}\n");
+            IceCandidateReady?.Invoke(json);
+        };
+        _pc.oniceconnectionstatechange += state =>
+            File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: iceState={state}\n");
+        _pc.onconnectionstatechange += state =>
+            File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: connState={state}\n");
+
         _pc.setRemoteDescription(new RTCSessionDescriptionInit
         {
             type = RTCSdpType.offer,
@@ -114,6 +138,11 @@ public class WebRtcService : IAsyncDisposable
         });
         var answer = _pc.createAnswer();
         _pc.setLocalDescription(answer);
+
+        // Aplica candidatos ICE que chegaram antes de _pc ser criado
+        DrainPendingCandidates();
+
+        File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: answer criado, ICE gathering iniciado\n");
         return Task.FromResult(answer.sdp);
     }
 
@@ -121,10 +150,53 @@ public class WebRtcService : IAsyncDisposable
 
     public Task AddIceCandidateAsync(string candidateJson)
     {
-        var init = JsonSerializer.Deserialize<RTCIceCandidateInit>(candidateJson)
-                   ?? throw new ArgumentException("Candidato ICE inválido");
-        _pc!.addIceCandidate(init);
-        return Task.CompletedTask;
+        try
+        {
+            var init = JsonSerializer.Deserialize<RTCIceCandidateInit>(candidateJson)
+                       ?? throw new ArgumentException("Candidato ICE inválido");
+            lock (_candidateLock)
+            {
+                if (_pc == null)
+                {
+                    _pendingCandidates.Add(init);
+                    File.AppendAllText(LogPath,
+                        $"[ICE] {DateTime.Now}: candidato em fila (pc ainda nulo)\n");
+                    return Task.CompletedTask;
+                }
+            }
+            _pc.addIceCandidate(init);
+            return Task.CompletedTask;
+        }
+        catch (Exception ex)
+        {
+            File.AppendAllText(LogPath,
+                $"[ICE/Add] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
+            return Task.CompletedTask;
+        }
+    }
+
+    private void DrainPendingCandidates()
+    {
+        List<RTCIceCandidateInit> pending;
+        lock (_candidateLock)
+        {
+            pending = new List<RTCIceCandidateInit>(_pendingCandidates);
+            _pendingCandidates.Clear();
+        }
+        foreach (var c in pending)
+        {
+            try
+            {
+                _pc!.addIceCandidate(c);
+                File.AppendAllText(LogPath,
+                    $"[ICE] {DateTime.Now}: candidato pendente aplicado\n");
+            }
+            catch (Exception ex)
+            {
+                File.AppendAllText(LogPath,
+                    $"[ICE/Drain] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
+            }
+        }
     }
 
     // ── Captura full-GPU (monitor inteiro via DLL C++) ────────────────────────

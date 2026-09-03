@@ -139,13 +139,15 @@ public partial class MainWindow : Window
         _signaling.AnswerReceived += async (from, sdp) =>
         {
             if (from != friend.Id.ToString()) return;
-            await webRtc.SetRemoteAnswerAsync(sdp);
+            try { await webRtc.SetRemoteAnswerAsync(sdp); }
+            catch (Exception ex) { File.AppendAllText(LogPath, $"[Answer/Sender] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n"); }
         };
 
         _signaling.IceCandidateReceived += async (from, cand) =>
         {
             if (from != friend.Id.ToString()) return;
-            await webRtc.AddIceCandidateAsync(cand);
+            try { await webRtc.AddIceCandidateAsync(cand); }
+            catch (Exception ex) { File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n"); }
         };
 
         var offerSdp = await webRtc.CreateOfferAsync();
@@ -176,14 +178,11 @@ public partial class MainWindow : Window
     {
         var webRtc = new WebRtcService();
 
-        // Envia ICE candidates do receptor para o remetente
-        webRtc.IceCandidateReady += async c =>
-            await _signaling.SendIceCandidateAsync(fromUserId, c);
-
         _signaling.IceCandidateReceived += async (from, cand) =>
         {
             if (from != fromUserId) return;
-            await webRtc.AddIceCandidateAsync(cand);
+            try { await webRtc.AddIceCandidateAsync(cand); }
+            catch (Exception ex) { File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n"); }
         };
 
         var vm = new ReceiveViewModel(webRtc, _signaling, fromUserId);
