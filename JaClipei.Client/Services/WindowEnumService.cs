@@ -58,6 +58,7 @@ public static class WindowEnumService
         [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
         public string szDevice;
     }
+
     private const uint MONITORINFOF_PRIMARY = 1;
 
     // ── Janelas ───────────────────────────────────────────────────────────
@@ -92,33 +93,43 @@ public static class WindowEnumService
         return result;
     }
 
-    // ── Monitores (sem WinForms) ──────────────────────────────────────────
+    // ── Monitores (P/Invoke puro, sem WinForms) ───────────────────────────
+
+    // Lista thread-local para callback do EnumDisplayMonitors
+    [ThreadStatic]
+    private static List<MonitorInfo>? _monitorList;
+    [ThreadStatic]
+    private static int _monitorIndex;
+
+    private static bool MonitorCallback(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData)
+    {
+        var info = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>() };
+        if (GetMonitorInfo(hMonitor, ref info))
+        {
+            bool primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
+            _monitorList!.Add(new MonitorInfo
+            {
+                Index       = _monitorIndex,
+                DisplayName = primary
+                    ? $"Monitor {_monitorIndex + 1} (Principal)"
+                    : $"Monitor {_monitorIndex + 1}",
+                Bounds = new System.Windows.Rect(
+                    info.rcMonitor.Left,
+                    info.rcMonitor.Top,
+                    info.rcMonitor.Right  - info.rcMonitor.Left,
+                    info.rcMonitor.Bottom - info.rcMonitor.Top),
+                IsPrimary = primary
+            });
+            _monitorIndex++;
+        }
+        return true;
+    }
 
     public static List<MonitorInfo> GetMonitors()
     {
-        var list  = new List<MonitorInfo>();
-        int index = 0;
-
-        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (hMon, _, ref rc, _) =>
-        {
-            var info = new MONITORINFOEX { cbSize = Marshal.SizeOf<MONITORINFOEX>() };
-            if (GetMonitorInfo(hMon, ref info))
-            {
-                bool primary = (info.dwFlags & MONITORINFOF_PRIMARY) != 0;
-                list.Add(new MonitorInfo
-                {
-                    Index       = index++,
-                    DisplayName = primary ? $"Monitor {index} (Principal)" : $"Monitor {index}",
-                    Bounds      = new System.Windows.Rect(
-                        info.rcMonitor.Left, info.rcMonitor.Top,
-                        info.rcMonitor.Right  - info.rcMonitor.Left,
-                        info.rcMonitor.Bottom - info.rcMonitor.Top),
-                    IsPrimary   = primary
-                });
-            }
-            return true;
-        }, IntPtr.Zero);
-
-        return list;
+        _monitorList  = new List<MonitorInfo>();
+        _monitorIndex = 0;
+        EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, MonitorCallback, IntPtr.Zero);
+        return _monitorList;
     }
 }
