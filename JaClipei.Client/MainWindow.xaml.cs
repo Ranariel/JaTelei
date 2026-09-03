@@ -11,6 +11,7 @@ namespace JaClipei.Client;
 
 public partial class MainWindow : Window
 {
+    private static readonly string LogPath = Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
     private readonly ApiService _api = new();
     private readonly SignalingService _signaling = new();
     private UpdateService.UpdateInfo? _pendingUpdate;
@@ -18,9 +19,13 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Log("[MainWindow] InitializeComponent OK");
         ShowLogin();
         _ = CheckForUpdateAsync();
     }
+
+    private static void Log(string msg)
+        => File.AppendAllText(LogPath, $"{msg} @ {DateTime.Now:HH:mm:ss}\n");
 
     // ── Atualização ────────────────────────────────────────────────────────
 
@@ -48,23 +53,46 @@ public partial class MainWindow : Window
 
     private void ShowLogin()
     {
-        var vm = new LoginViewModel(_api);
-        vm.LoginSuccess += async () =>
+        try
         {
-            try
+            Log("[ShowLogin] criando vm");
+            var vm = new LoginViewModel(_api);
+            Log("[ShowLogin] vm OK");
+
+            vm.LoginSuccess += async () =>
             {
-                await _signaling.ConnectAsync(_api.Token!);
-                _signaling.OfferReceived += OnOfferReceived;
-            }
-            catch (Exception ex)
+                try
+                {
+                    await _signaling.ConnectAsync(_api.Token!);
+                    _signaling.OfferReceived += OnOfferReceived;
+                }
+                catch (Exception ex)
+                {
+                    Log($"[SignalR] {ex}");
+                }
+                Dispatcher.Invoke(ShowFriends);
+            };
+
+            Log("[ShowLogin] criando view");
+            var view = new LoginView { DataContext = vm };
+            Log("[ShowLogin] view OK, atribuindo content");
+            MainContent.Content = view;
+            Log("[ShowLogin] content atribuido");
+        }
+        catch (Exception ex)
+        {
+            Log($"[ShowLogin ERRO] {ex}");
+            MainContent.Content = new TextBlock
             {
-                File.AppendAllText(
-                    Path.Combine(Path.GetTempPath(), "jaclipei_error.txt"),
-                    $"[SignalR] {DateTime.Now}: {ex}\n\n");
-            }
-            Dispatcher.Invoke(ShowFriends);
-        };
-        MainContent.Content = new LoginView { DataContext = vm };
+                Text = $"ERRO LOGIN: {ex.GetType().Name}\n{ex.Message}",
+                Foreground = new SolidColorBrush(Colors.Red),
+                FontSize = 16,
+                VerticalAlignment = VerticalAlignment.Center,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(20)
+            };
+        }
     }
 
     // ── Friends ────────────────────────────────────────────────────────────
@@ -80,15 +108,12 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            File.AppendAllText(
-                Path.Combine(Path.GetTempPath(), "jaclipei_error.txt"),
-                $"[ShowFriends] {DateTime.Now}: {ex}\n\n");
-
+            Log($"[ShowFriends ERRO] {ex}");
             MainContent.Content = new TextBlock
             {
-                Text = $"ERRO: {ex.Message}",
+                Text = $"ERRO FRIENDS: {ex.GetType().Name}\n{ex.Message}",
                 Foreground = new SolidColorBrush(Colors.Red),
-                FontSize = 18,
+                FontSize = 16,
                 VerticalAlignment = VerticalAlignment.Center,
                 HorizontalAlignment = HorizontalAlignment.Center,
                 TextWrapping = TextWrapping.Wrap,
