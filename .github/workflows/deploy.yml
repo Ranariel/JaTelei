@@ -1,0 +1,39 @@
+name: Build & Deploy JaClipei
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build-and-deploy:
+    runs-on: windows-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET 8
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '8.0.x'
+
+    - name: Build C++ Capture DLL
+      run: |
+        cmake -B JaClipei.Capture/build -S JaClipei.Capture -G "Visual Studio 17 2022" -A x64
+        cmake --build JaClipei.Capture/build --config Release
+        copy JaClipei.Capture\build\Release\JaClipei.Capture.dll JaClipei.Client\
+
+    - name: Publish .NET app
+      run: dotnet publish JaClipei.Client/JaClipei.Client.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true -o publish
+
+    - name: Copy DLL to publish folder
+      run: copy JaClipei.Client\JaClipei.Capture.dll publish\
+
+    - name: Upload to VPS
+      uses: appleboy/scp-action@v0.1.7
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: root
+        key: ${{ secrets.VPS_SSH_KEY }}
+        source: "publish/JaClipei.exe"
+        target: "/opt/screenshare/releases/JaClipei-latest.exe"
+        strip_components: 1
