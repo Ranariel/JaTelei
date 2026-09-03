@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Text;
 using System.Windows;
 
 namespace JaClipei.Client.Services;
@@ -13,9 +14,6 @@ public class UpdateService
 
     public record UpdateInfo(string Version, string DownloadUrl, string Filename);
 
-    /// <summary>
-    /// Verifica se há versão mais nova. Retorna null se está atualizado ou falhou.
-    /// </summary>
     public static async Task<UpdateInfo?> CheckAsync(string currentVersion)
     {
         try
@@ -28,19 +26,18 @@ public class UpdateService
         }
         catch
         {
-            return null; // sem internet ou servidor offline — ignora silenciosamente
+            return null;
         }
     }
 
-    /// <summary>
-    /// Baixa o novo exe e o substitui pelo atual via script bat, reiniciando o app.
-    /// </summary>
     public static async Task DownloadAndRestartAsync(UpdateInfo update)
     {
         var currentExe = Process.GetCurrentProcess().MainModule!.FileName;
-        var dir = Path.GetDirectoryName(currentExe)!;
-        var newExe = Path.Combine(dir, "JaClipei-update.exe");
-        var batPath = Path.Combine(Path.GetTempPath(), "jaclipei_update.bat");
+
+        // Baixa para %TEMP% para evitar problemas com acentos no caminho
+        var tempDir = Path.GetTempPath();
+        var newExe = Path.Combine(tempDir, "JaClipei-update.exe");
+        var batPath = Path.Combine(tempDir, "jaclipei_update.bat");
 
         // Download
         using var response = await _http.GetAsync(update.DownloadUrl, HttpCompletionOption.ResponseHeadersRead);
@@ -50,18 +47,20 @@ public class UpdateService
         await using (var file = File.Create(newExe))
             await stream.CopyToAsync(file);
 
-        // Script: espera o app fechar, substitui o exe, reinicia
-        var bat = $"""
-            @echo off
-            timeout /t 2 /nobreak >nul
-            move /y "{newExe}" "{currentExe}"
-            start "" "{currentExe}"
-            del "%~f0"
-            """;
+        // Bat escrito com encoding ANSI (Windows-1252) para cmd.exe ler corretamente
+        var bat = "@echo off\r\n"
+                + "timeout /t 2 /nobreak >nul\r\n"
+                + $"move /y \"{newExe}\" \"{currentExe}\"\r\n"
+                + $"start \"\" \"{currentExe}\"\r\n"
+                + "del \"%~f0\"\r\n";
 
-        await File.WriteAllTextAsync(batPath, bat);
+        await File.WriteAllTextAsync(batPath, bat, Encoding.Default);
 
-        Process.Start(new ProcessStartInfo(batPath) { UseShellExecute = true, WindowStyle = ProcessWindowStyle.Hidden });
+        Process.Start(new ProcessStartInfo(batPath)
+        {
+            UseShellExecute = true,
+            WindowStyle = ProcessWindowStyle.Hidden
+        });
         Application.Current.Shutdown();
     }
 }
