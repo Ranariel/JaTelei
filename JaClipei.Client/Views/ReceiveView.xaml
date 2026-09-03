@@ -1,0 +1,11 @@
+<UserControl x:Class="JaClipei.Client.Views.ReceiveView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid Background="#0d0d14">
+        <Image Source="{Binding Frame}" Stretch="Uniform" RenderOptions.BitmapScalingMode="LowQuality"/>
+        <StackPanel VerticalAlignment="Top" HorizontalAlignment="Right" Margin="12" Orientation="Horizontal">
+            <TextBlock Text="{Binding StatusText}" Foreground="#6c7086" FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0"/>
+            <Button Content="✕  Parar" Command="{Binding StopCommand}" Padding="10,4"/>
+        </StackPanel>
+    </Grid>
+</UserControl>
