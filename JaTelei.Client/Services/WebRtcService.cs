@@ -11,18 +11,15 @@ namespace JaTelei.Client.Services;
 
 /// <summary>
 /// WebRTC peer-to-peer via SIPSorcery.
-/// Video = H.264 via Windows Media Foundation (MfH264Encoder / MfH264Decoder).
-/// Sender: GDI/DXGI capture → MfH264Encoder → RTCPeerConnection.SendVideo().
+/// Sender: JaTelei.Capture.dll (full-GPU: DXGI→D3D11VP→HW H264) → RTCPeerConnection.SendVideo().
 /// Receiver: RTCPeerConnection.OnVideoFrameReceived → MfH264Decoder → FrameReceived.
 /// </summary>
 public class WebRtcService : IAsyncDisposable
 {
     private RTCPeerConnection? _pc;
     private CancellationTokenSource? _cts;
-    private MfH264Decoder?   _decoder;    // receptor: decodifica H264 → BGRA
+    private MfH264Decoder? _decoder;
 
-    // Resolução esperada no lado receptor (deve refletir o que o sender envia).
-    // Pode ser atualizada via SetReceiveResolution() antes da negociação.
     private int _rxWidth  = 1280;
     private int _rxHeight =  720;
 
@@ -34,21 +31,20 @@ public class WebRtcService : IAsyncDisposable
         }
     };
 
-    /// <summary>Dispara com pixels BGRA brutos + dimensões (receptor).</summary>
     public event Action<byte[], int, int>? FrameReceived;
     public event Action<string>?           IceCandidateReady;
 
-    public bool IsVideoTrackReady =>
+    public bool IsConnected =>
         _pc?.iceConnectionState == RTCIceConnectionState.connected;
 
-    /// <summary>Informa ao receptor qual resolução esperar (antes de CreateAnswerAsync).</summary>
     public void SetReceiveResolution(int width, int height)
     {
         _rxWidth  = width;
         _rxHeight = height;
     }
 
-    // ── P/Invoke GDI (captura de janelas) ─────────────────────────────────
+    // ── P/Invoke GDI (captura de janela/região — fallback quando C++ não é usado) ──
+
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
 
@@ -56,7 +52,7 @@ public class WebRtcService : IAsyncDisposable
     private struct RECT { public int Left, Top, Right, Bottom; }
     private const uint PW_RENDERFULLCONTENT = 0x00000002;
 
-    // ── Sender ────────────────────────────────────────────────────────────
+    // ── Sender ────────────────────────────────────────────────────────────────
 
     public async Task<string> CreateOfferAsync()
     {
@@ -81,20 +77,20 @@ public class WebRtcService : IAsyncDisposable
             type = RTCSdpType.answer,
             sdp  = sdp
         });
+        // Pede keyframe ao encoder assim que o peer aceita
+        ScreenCaptureService.ForceKeyframe();
         return Task.CompletedTask;
     }
 
-    // ── Receiver ──────────────────────────────────────────────────────────
+    // ── Receiver ──────────────────────────────────────────────────────────────
 
     public Task<string> CreateAnswerAsync(string offerSdp)
     {
         _pc = new RTCPeerConnection(Config);
 
-        // Decodificador H264 → BGRA via Windows Media Foundation
         _decoder = new MfH264Decoder();
-        int rxW = _rxWidth, rxH = _rxHeight;   // captura local para o lambda
+        int rxW = _rxWidth, rxH = _rxHeight;
 
-        // OnVideoFrameReceived recebe frames H264 já remontados (após reassembly RTP)
         _pc.OnVideoFrameReceived += (IPEndPoint ep, uint ts, byte[] frame, VideoFormat fmt) =>
         {
             try
@@ -103,7 +99,7 @@ public class WebRtcService : IAsyncDisposable
                 if (bgra != null)
                     FrameReceived?.Invoke(bgra, w, h);
             }
-            catch { /* tolera erros de decodificação isolados */ }
+            catch { }
         };
 
         var videoTrack = new MediaStreamTrack(
@@ -122,38 +118,52 @@ public class WebRtcService : IAsyncDisposable
         return Task.FromResult(answer.sdp);
     }
 
-    // ── ICE ───────────────────────────────────────────────────────────────
+    // ── ICE ───────────────────────────────────────────────────────────────────
 
     public Task AddIceCandidateAsync(string candidateJson)
     {
         var init = JsonSerializer.Deserialize<RTCIceCandidateInit>(candidateJson)
-                   ?? throw new ArgumentException("Candidato ICE invalido");
+                   ?? throw new ArgumentException("Candidato ICE inválido");
         _pc!.addIceCandidate(init);
         return Task.CompletedTask;
     }
 
-    // ── Captura + encode ──────────────────────────────────────────────────
+    // ── Captura full-GPU (monitor inteiro via DLL C++) ────────────────────────
 
-    public void StartCapture(int fps = 15, ShareTarget? target = null)
+    public void StartCapture(int fps = 30, ShareTarget? target = null)
     {
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
 
-        int  effectiveFps      = target?.Fps > 0 ? target.Fps : fps;
-        int  resolutionHeight  = target?.ResolutionHeight ?? 720;
-        var  delay             = TimeSpan.FromMilliseconds(1000.0 / effectiveFps);
-        // H.264 RTP clock = 90 000 Hz
-        uint rtpDuration       = (uint)(90_000.0 / effectiveFps);
+        int effectiveFps = target?.Fps > 0 ? target.Fps : fps;
+        int bitrateKbps  = 8_000; // 8 Mbps — ajustável depois via RTCP
+        int targetHeight = target?.ResolutionHeight ?? 0; // 0 = nativo
 
-        bool useNative = target is null ||
-                         (target.WindowHandle == IntPtr.Zero && target.MonitorBounds is null);
+        // H264 RTP clock = 90 000 Hz
+        uint rtpDuration = (uint)(90_000.0 / effectiveFps);
+        var  delay       = TimeSpan.FromMilliseconds(1000.0 / effectiveFps);
+
+        bool useNativeDll = target is null ||
+                            (target.WindowHandle == IntPtr.Zero && target.MonitorBounds is null);
 
         Task.Run(async () =>
         {
-            if (useNative) ScreenCaptureService.Initialize();
+            bool dllReady = false;
 
-            MfH264Encoder? encoder = null;
-            int encoderW = 0, encoderH = 0;
+            if (useNativeDll)
+            {
+                int dstH = targetHeight > 0 ? targetHeight : 0;
+                int dstW = 0; // mantém proporção
+                dllReady = ScreenCaptureService.Initialize(
+                    dstWidth:    dstW,
+                    dstHeight:   dstH,
+                    fps:         effectiveFps,
+                    bitrateKbps: bitrateKbps);
+            }
+
+            // Encoder C# — usado apenas para janela/região (não monitor inteiro)
+            MfH264Encoder? fallbackEncoder = null;
+            int encW = 0, encH = 0;
 
             try
             {
@@ -162,40 +172,49 @@ public class WebRtcService : IAsyncDisposable
                     var t0 = DateTime.UtcNow;
                     try
                     {
-                        byte[]? raw = null;
-                        int w = 0, h = 0;
+                        byte[]? h264 = null;
 
-                        if (useNative)
-                            raw = ScreenCaptureService.CaptureFrame(out w, out h);
-                        else if (target!.WindowHandle != IntPtr.Zero)
-                            raw = CaptureWindow(target.WindowHandle, out w, out h);
-                        else if (target!.MonitorBounds is System.Windows.Rect bounds)
-                            raw = CaptureRegion((int)bounds.X, (int)bounds.Y,
-                                                (int)bounds.Width, (int)bounds.Height,
-                                                out w, out h);
-
-                        if (raw != null && w > 0 && h > 0)
+                        if (useNativeDll && dllReady)
                         {
-                            var (bgra, dstW, dstH) = ResizeBgra(raw, w, h, resolutionHeight);
+                            // ─── Path principal: pipeline full-GPU via DLL ───
+                            h264 = ScreenCaptureService.CaptureAndEncode();
+                        }
+                        else
+                        {
+                            // ─── Fallback: GDI + encoder C# (janela/região) ─
+                            byte[]? raw = null;
+                            int w = 0, h = 0;
 
-                            // Recria o encoder se as dimensões mudaram (ex: janela redimensionada)
-                            if (encoder == null || dstW != encoderW || dstH != encoderH)
-                            {
-                                encoder?.Dispose();
-                                encoder  = new MfH264Encoder(dstW, dstH, effectiveFps);
-                                encoderW = dstW;
-                                encoderH = dstH;
-                            }
+                            if (target!.WindowHandle != IntPtr.Zero)
+                                raw = CaptureWindow(target.WindowHandle, out w, out h);
+                            else if (target.MonitorBounds is System.Windows.Rect bounds)
+                                raw = CaptureRegion((int)bounds.X, (int)bounds.Y,
+                                                    (int)bounds.Width, (int)bounds.Height,
+                                                    out w, out h);
 
-                            var h264 = encoder.Encode(bgra, dstW, dstH);
-                            if (h264?.Length > 0)
+                            if (raw != null && w > 0 && h > 0)
                             {
-                                try { _pc?.SendVideo(rtpDuration, h264); }
-                                catch { /* conexão ainda não pronta */ }
+                                int dstH = targetHeight > 0 ? targetHeight : h;
+                                var (bgra, dstW, dstHH) = ResizeBgra(raw, w, h, dstH);
+
+                                if (fallbackEncoder == null || dstW != encW || dstHH != encH)
+                                {
+                                    fallbackEncoder?.Dispose();
+                                    fallbackEncoder = new MfH264Encoder(dstW, dstHH, effectiveFps, bitrateKbps * 1000);
+                                    encW = dstW; encH = dstHH;
+                                }
+
+                                h264 = fallbackEncoder.Encode(bgra, dstW, dstHH);
                             }
                         }
+
+                        if (h264?.Length > 0)
+                        {
+                            try { _pc?.SendVideo(rtpDuration, h264); }
+                            catch { }
+                        }
                     }
-                    catch { /* tolera falhas isoladas de captura */ }
+                    catch { }
 
                     var wait = delay - (DateTime.UtcNow - t0);
                     if (wait > TimeSpan.Zero)
@@ -204,8 +223,9 @@ public class WebRtcService : IAsyncDisposable
             }
             finally
             {
-                encoder?.Dispose();
-                if (useNative) ScreenCaptureService.Shutdown();
+                fallbackEncoder?.Dispose();
+                if (useNativeDll && dllReady)
+                    ScreenCaptureService.Shutdown();
             }
         }, token);
     }
@@ -216,7 +236,7 @@ public class WebRtcService : IAsyncDisposable
         _cts = null;
     }
 
-    // ── Captura GDI ───────────────────────────────────────────────────────
+    // ── GDI (fallback para janela/região) ────────────────────────────────────
 
     private static byte[] CaptureWindow(IntPtr hwnd, out int width, out int height)
     {
@@ -242,39 +262,33 @@ public class WebRtcService : IAsyncDisposable
 
         using var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
         using (var g = Graphics.FromImage(bmp))
-            g.CopyFromScreen(x, y, 0, 0, new System.Drawing.Size(w, h));
+            g.CopyFromScreen(x, y, 0, 0, new Size(w, h));
         return BitmapToBgra(bmp, w, h);
     }
 
     private static byte[] BitmapToBgra(Bitmap bmp, int w, int h)
     {
         var bd = bmp.LockBits(new Rectangle(0, 0, w, h),
-                              ImageLockMode.ReadOnly,
-                              PixelFormat.Format32bppArgb);
+                              ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
         var bytes = new byte[Math.Abs(bd.Stride) * h];
         Marshal.Copy(bd.Scan0, bytes, 0, bytes.Length);
         bmp.UnlockBits(bd);
         return bytes;
     }
 
-    // ── Redimensiona BGRA mantendo proporção ──────────────────────────────
-
     private static (byte[] bgra, int width, int height) ResizeBgra(
         byte[] bgra, int srcW, int srcH, int targetH)
     {
-        if (targetH <= 0 || targetH >= srcH)
-            return (bgra, srcW, srcH);
+        if (targetH <= 0 || targetH >= srcH) return (bgra, srcW, srcH);
 
         int dstH = targetH;
         int dstW = (int)(srcW * ((double)dstH / srcH));
-        // H.264: dimensões devem ser pares
         if (dstW % 2 != 0) dstW--;
         if (dstH % 2 != 0) dstH--;
 
         using var src = new Bitmap(srcW, srcH, PixelFormat.Format32bppArgb);
         var bd = src.LockBits(new Rectangle(0, 0, srcW, srcH),
-                              ImageLockMode.WriteOnly,
-                              PixelFormat.Format32bppArgb);
+                              ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
         Marshal.Copy(bgra, 0, bd.Scan0, bgra.Length);
         src.UnlockBits(bd);
 
