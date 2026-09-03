@@ -51,6 +51,7 @@ internal static class MfNative
     public const uint CLSCTX_INPROC_SERVER               = 1;
     public const uint MFT_OUTPUT_STREAM_PROVIDES_SAMPLES = 0x00000100;
     public const int  MF_E_TRANSFORM_NEED_MORE_INPUT     = unchecked((int)0xC00D6D72);
+    public const int  MF_E_TRANSFORM_STREAM_CHANGE       = unchecked((int)0xC00D6D61);
     public const uint MFT_MESSAGE_NOTIFY_BEGIN_STREAMING = 0x10000000;
     public const uint MFT_MESSAGE_NOTIFY_START_OF_STREAM = 0x20000000;
 
@@ -66,6 +67,9 @@ internal static class MfNative
     public delegate int Fn_SetUINT64(IntPtr self, ref Guid key, ulong value);
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    public delegate int Fn_GetUINT64(IntPtr self, ref Guid key, out ulong pValue);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     public delegate int Fn_SetGUID(IntPtr self, ref Guid key, ref Guid value);
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
@@ -76,6 +80,9 @@ internal static class MfNative
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     public delegate int Fn_SetOutputType(IntPtr self, uint streamId, IntPtr type, uint flags);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    public delegate int Fn_GetCurrentType(IntPtr self, uint streamId, out IntPtr ppType);
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     public delegate int Fn_ProcessMessage(IntPtr self, uint msg, UIntPtr param);
@@ -160,6 +167,10 @@ internal static class MfNative
 
     public static int SetGUID(IntPtr attr, Guid key, Guid val)
         => Vtbl<Fn_SetGUID>(attr, 24)(attr, ref key, ref val);
+
+    // IMFAttributes::GetUINT64 = slot 8
+    public static int GetUINT64(IntPtr attr, Guid key, out ulong val)
+        => Vtbl<Fn_GetUINT64>(attr, 8)(attr, ref key, out val);
 
     /// <summary>Pack (width, height) into UINT64 for MF_MT_FRAME_SIZE.</summary>
     public static ulong PackWH(uint w, uint h) => ((ulong)w << 32) | h;
@@ -393,6 +404,10 @@ public sealed class MfH264Encoder : IDisposable
 /// <summary>
 /// Decodes H264 Annex B frames to BGRA using the Windows inbox software MFT
 /// (CLSID_CMSH264DecoderMFT). Thread-hostile — call Decode() from one thread.
+///
+/// Resolution is auto-detected from the H264 SPS NAL unit — no need to provide
+/// width/height upfront. On first keyframe the MFT fires MF_E_TRANSFORM_STREAM_CHANGE
+/// which we handle to learn the actual decoded dimensions.
 /// </summary>
 public sealed class MfH264Decoder : IDisposable
 {
@@ -400,6 +415,10 @@ public sealed class MfH264Decoder : IDisposable
     private int    _width, _height;
     private long   _sampleTime;
     private bool   _streaming;
+    private bool   _outputTypeSet;
+
+    private static readonly string LogPath =
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "jaclipei_error.txt");
 
     public MfH264Decoder()
     {
@@ -412,53 +431,83 @@ public sealed class MfH264Decoder : IDisposable
             throw new InvalidOperationException($"CoCreateInstance decoder failed: 0x{(uint)hr:X8}");
     }
 
-    private void Initialize(int width, int height)
+    /// <summary>
+    /// Sets up the H264 input type. Resolution is NOT specified — the MFT reads it
+    /// from the bitstream SPS. Output type is configured later via HandleStreamChange().
+    /// </summary>
+    private void Initialize()
     {
-        _width = width; _height = height;
-
-        // Input type: H264
+        // Input type: H264 — major type + subtype only; let MFT read resolution from SPS
         MfNative.MFCreateMediaType(out var it);
         try
         {
-            MfNative.SetGUID  (it, MfNative.MF_MT_MAJOR_TYPE, MfNative.MFMediaType_Video);
-            MfNative.SetGUID  (it, MfNative.MF_MT_SUBTYPE,    MfNative.MFVideoFormat_H264);
-            MfNative.SetUINT64(it, MfNative.MF_MT_FRAME_SIZE, MfNative.PackWH((uint)width, (uint)height));
+            MfNative.SetGUID(it, MfNative.MF_MT_MAJOR_TYPE, MfNative.MFMediaType_Video);
+            MfNative.SetGUID(it, MfNative.MF_MT_SUBTYPE,    MfNative.MFVideoFormat_H264);
+            // Deliberately NOT setting MF_MT_FRAME_SIZE — decoder reads it from SPS NAL
             int hr = MfNative.Vtbl<MfNative.Fn_SetInputType>(_mft, 15)(_mft, 0, it, 0);
             if (hr < 0)
-                throw new InvalidOperationException($"Decoder SetInputType failed: 0x{(uint)hr:X8}");
+                throw new InvalidOperationException($"Decoder SetInputType H264: 0x{(uint)hr:X8}");
         }
         finally { MfNative.Release(ref it); }
 
-        // Output type: NV12
+        var pm = MfNative.Vtbl<MfNative.Fn_ProcessMessage>(_mft, 23);
+        pm(_mft, MfNative.MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, UIntPtr.Zero);
+        pm(_mft, MfNative.MFT_MESSAGE_NOTIFY_START_OF_STREAM, UIntPtr.Zero);
+        _streaming     = true;
+        _outputTypeSet = false;
+    }
+
+    /// <summary>
+    /// Called after MF_E_TRANSFORM_STREAM_CHANGE — queries the MFT for the actual
+    /// output format (width x height) and sets the NV12 output type accordingly.
+    /// IMFTransform::GetOutputCurrentType = slot 18
+    /// IMFAttributes::GetUINT64           = slot 8
+    /// </summary>
+    private void HandleStreamChange()
+    {
+        // Query what the MFT decided the output format is
+        int hr = MfNative.Vtbl<MfNative.Fn_GetCurrentType>(_mft, 18)(_mft, 0, out IntPtr mt);
+        if (hr >= 0 && mt != IntPtr.Zero)
+        {
+            try
+            {
+                hr = MfNative.GetUINT64(mt, MfNative.MF_MT_FRAME_SIZE, out ulong wh);
+                if (hr >= 0 && wh != 0)
+                {
+                    _width  = (int)(wh >> 32);
+                    _height = (int)(wh & 0xFFFF_FFFFUL);
+                }
+            }
+            finally { MfNative.Release(ref mt); }
+        }
+
+        // Fallback to 1920x1080 if query failed
+        if (_width  <= 0) _width  = 1920;
+        if (_height <= 0) _height = 1080;
+
+        // Now configure the output type: NV12 at the actual decoded resolution
         MfNative.MFCreateMediaType(out var ot);
         try
         {
             MfNative.SetGUID  (ot, MfNative.MF_MT_MAJOR_TYPE, MfNative.MFMediaType_Video);
             MfNative.SetGUID  (ot, MfNative.MF_MT_SUBTYPE,    MfNative.MFVideoFormat_NV12);
-            MfNative.SetUINT64(ot, MfNative.MF_MT_FRAME_SIZE, MfNative.PackWH((uint)width, (uint)height));
-            int hr = MfNative.Vtbl<MfNative.Fn_SetOutputType>(_mft, 16)(_mft, 0, ot, 0);
-            if (hr < 0)
-                throw new InvalidOperationException($"Decoder SetOutputType failed: 0x{(uint)hr:X8}");
+            MfNative.SetUINT64(ot, MfNative.MF_MT_FRAME_SIZE, MfNative.PackWH((uint)_width, (uint)_height));
+            hr = MfNative.Vtbl<MfNative.Fn_SetOutputType>(_mft, 16)(_mft, 0, ot, 0);
+            if (hr >= 0) _outputTypeSet = true;
         }
         finally { MfNative.Release(ref ot); }
-
-        var pm = MfNative.Vtbl<MfNative.Fn_ProcessMessage>(_mft, 23);
-        pm(_mft, MfNative.MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, UIntPtr.Zero);
-        pm(_mft, MfNative.MFT_MESSAGE_NOTIFY_START_OF_STREAM, UIntPtr.Zero);
-        _streaming = true;
     }
 
     /// <summary>
     /// Decode one H264 Annex B frame. Returns (null,0,0) when the decoder needs
-    /// more input (e.g. waiting for IDR / B-frame reorder). Width/height required
-    /// on first call; ignored thereafter.
+    /// more input (e.g. waiting for IDR / B-frame reorder) or is still initialising.
+    /// Width/height are ignored — resolution is auto-detected from the bitstream.
     /// </summary>
-    public (byte[]? bgra, int width, int height) Decode(byte[] h264, int width = 1280, int height = 720)
+    public (byte[]? bgra, int width, int height) Decode(byte[] h264, int width = 0, int height = 0)
     {
         if (_mft == IntPtr.Zero) return (null, 0, 0);
 
-        if (!_streaming)
-            Initialize(width, height);
+        if (!_streaming) Initialize();
 
         uint h264Len = (uint)h264.Length;
         MfNative.MFCreateMemoryBuffer(h264Len, out var buf);
@@ -482,47 +531,63 @@ public sealed class MfH264Decoder : IDisposable
 
         var nv12 = DrainDecoder();
         if (nv12 == null || nv12.Length == 0) return (null, 0, 0);
+        if (_width <= 0 || _height <= 0)      return (null, 0, 0);
 
         return (Nv12ToBgra(nv12, _width, _height), _width, _height);
     }
 
     private byte[]? DrainDecoder()
     {
-        MfNative.Vtbl<MfNative.Fn_GetOutputStreamInfo>(_mft, 7)(_mft, 0, out var si);
-        bool mftOwns = (si.dwFlags & MfNative.MFT_OUTPUT_STREAM_PROVIDES_SAMPLES) != 0;
+        // CMSH264DecoderMFT provides its own samples (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES).
+        // Always pass pSample = IntPtr.Zero; the MFT fills db.pSample on success.
+        // On MF_E_TRANSFORM_STREAM_CHANGE the output format changed — query it and retry once.
 
-        IntPtr outBuf    = IntPtr.Zero;
-        IntPtr outSample = IntPtr.Zero;
-        try
+        for (int attempt = 0; attempt < 2; attempt++)
         {
-            if (!mftOwns)
+            var db = new MfNative.MFT_OUTPUT_DATA_BUFFER
             {
-                uint sz = si.cbSize > 0 ? si.cbSize : (uint)(_width * _height * 3 / 2 + 4096);
-                MfNative.MFCreateMemoryBuffer(sz, out outBuf);
-                MfNative.MFCreateSample(out outSample);
-                MfNative.Vtbl<MfNative.Fn_AddBuffer>(outSample, 42)(outSample, outBuf);
-            }
+                dwStreamID = 0,
+                pSample    = IntPtr.Zero
+            };
 
-            var db = new MfNative.MFT_OUTPUT_DATA_BUFFER { pSample = outSample };
             int hr = MfNative.Vtbl<MfNative.Fn_ProcessOutput>(_mft, 25)
                               (_mft, 0, 1, ref db, out _);
 
-            if (hr == MfNative.MF_E_TRANSFORM_NEED_MORE_INPUT) return null;
-            if (hr < 0) return null;
+            // Release any event object the MFT may have returned
+            if (db.pEvents != IntPtr.Zero)
+            {
+                var ev = db.pEvents;
+                MfNative.Release(ref ev);
+            }
 
-            IntPtr smp = mftOwns ? db.pSample : outSample;
+            if (hr == MfNative.MF_E_TRANSFORM_NEED_MORE_INPUT)
+                return null;
+
+            if (hr == MfNative.MF_E_TRANSFORM_STREAM_CHANGE)
+            {
+                // Output format changed (first SPS decoded, or resolution change).
+                // Query actual output type and configure NV12 output.
+                HandleStreamChange();
+                continue; // retry ProcessOutput with the new output type
+            }
+
+            if (hr < 0)
+            {
+                System.IO.File.AppendAllText(LogPath,
+                    $"[Decoder] {DateTime.Now}: ProcessOutput hr=0x{(uint)hr:X8} w={_width} h={_height}\n");
+                return null;
+            }
+
+            // Success — read bytes from MFT-owned sample
+            IntPtr smp = db.pSample;
             if (smp == IntPtr.Zero) return null;
 
             var data = MfNative.ReadSampleBytes(smp);
-            if (mftOwns && db.pSample != IntPtr.Zero)
-                MfNative.Release(ref db.pSample);
-
+            MfNative.Release(ref smp);
             return data.Length > 0 ? data : null;
         }
-        finally
-        {
-            if (!mftOwns) { MfNative.Release(ref outSample); MfNative.Release(ref outBuf); }
-        }
+
+        return null;
     }
 
     /// <summary>NV12 → BGRA, BT.601 integer math.</summary>
