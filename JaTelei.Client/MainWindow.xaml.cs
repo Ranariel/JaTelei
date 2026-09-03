@@ -179,6 +179,10 @@ public partial class MainWindow : Window
     {
         var webRtc = new WebRtcService();
 
+        // Envia ICE candidates do receptor para o remetente
+        webRtc.IceCandidateReady += async c =>
+            await _signaling.SendIceCandidateAsync(fromUserId, c);
+
         _signaling.IceCandidateReceived += async (from, cand) =>
         {
             if (from != fromUserId) return;
