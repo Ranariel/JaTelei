@@ -49,16 +49,29 @@
                                Margin="0,4,0,0"/>
                 </StackPanel>
 
-                <!-- Apelido (só no registro) -->
+                <!-- Apelido — sempre visível -->
                 <TextBox Margin="0,0,0,10"
                          Tag="Apelido (ex: gamer123)"
-                         Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}"
-                         Visibility="{Binding IsRegisterMode, Converter={StaticResource BoolToVis}}"/>
+                         Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}"/>
 
-                <!-- Email -->
-                <TextBox Margin="0,0,0,10"
-                         Tag="Email"
-                         Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}"/>
+                <!-- Email — apenas no modo registro (opcional) -->
+                <StackPanel Visibility="{Binding IsRegisterMode, Converter={StaticResource BoolToVis}}">
+                    <TextBox Margin="0,0,0,4"
+                             Tag="Email (opcional)"
+                             Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}"/>
+                    <!-- Aviso sobre importância do email -->
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
+                        <TextBlock Text="⚠"
+                                   Foreground="#F59E0B"
+                                   FontSize="11"
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,5,0"/>
+                        <TextBlock Text="Importante para recuperar sua conta"
+                                   Foreground="#888888"
+                                   FontSize="11"
+                                   VerticalAlignment="Center"/>
+                    </StackPanel>
+                </StackPanel>
 
                 <!-- Senha -->
                 <PasswordBox Margin="0,0,0,4"
