@@ -9,7 +9,7 @@ namespace JaClipei.Client.Services;
 
 /// <summary>
 /// WebRTC peer-to-peer via SIPSorcery.
-/// Vídeo = frames JPEG enviados por DataChannel.
+/// Video = frames JPEG enviados por DataChannel.
 /// </summary>
 public class WebRtcService : IAsyncDisposable
 {
@@ -30,8 +30,7 @@ public class WebRtcService : IAsyncDisposable
 
     public bool IsDataChannelOpen => _dc?.readyState == RTCDataChannelState.open;
 
-    // ── P/Invoke para captura de janela ───────────────────────────────────
-
+    // P/Invoke para captura de janela
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
 
@@ -40,8 +39,7 @@ public class WebRtcService : IAsyncDisposable
 
     private const uint PW_RENDERFULLCONTENT = 0x00000002;
 
-    // ── Sender ────────────────────────────────────────────────────────────
-
+    // Sender
     public async Task<string> CreateOfferAsync()
     {
         _pc = new RTCPeerConnection(Config);
@@ -58,8 +56,7 @@ public class WebRtcService : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    // ── Receiver ──────────────────────────────────────────────────────────
-
+    // Receiver
     public Task<string> CreateAnswerAsync(string offerSdp)
     {
         _pc = new RTCPeerConnection(Config);
@@ -75,23 +72,24 @@ public class WebRtcService : IAsyncDisposable
         return Task.FromResult(answer.sdp);
     }
 
-    // ── ICE ───────────────────────────────────────────────────────────────
-
+    // ICE
     public Task AddIceCandidateAsync(string candidateJson)
     {
         var init = JsonSerializer.Deserialize<RTCIceCandidateInit>(candidateJson)
-                   ?? throw new ArgumentException("Candidato ICE inválido");
+                   ?? throw new ArgumentException("Candidato ICE invalido");
         _pc!.addIceCandidate(init);
         return Task.CompletedTask;
     }
 
-    // ── Captura ───────────────────────────────────────────────────────────
-
+    // Captura
     public void StartCapture(int fps = 15, ShareTarget? target = null)
     {
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
-        var delay = TimeSpan.FromMilliseconds(1000.0 / fps);
+
+        int effectiveFps     = target?.Fps > 0 ? target.Fps : fps;
+        int resolutionHeight = target?.ResolutionHeight ?? 720;
+        var delay            = TimeSpan.FromMilliseconds(1000.0 / effectiveFps);
 
         Task.Run(async () =>
         {
@@ -115,10 +113,12 @@ public class WebRtcService : IAsyncDisposable
                         else if (target!.WindowHandle != IntPtr.Zero)
                             raw = CaptureWindow(target.WindowHandle, out w, out h);
                         else if (target!.MonitorBounds is System.Windows.Rect bounds)
-                            raw = CaptureRegion((int)bounds.X, (int)bounds.Y, (int)bounds.Width, (int)bounds.Height, out w, out h);
+                            raw = CaptureRegion((int)bounds.X, (int)bounds.Y,
+                                                (int)bounds.Width, (int)bounds.Height,
+                                                out w, out h);
 
                         if (raw != null && w > 0 && h > 0)
-                            _dc!.send(BgraToJpeg(raw, w, h));
+                            _dc!.send(BgraToJpeg(raw, w, h, resolutionHeight));
                     }
                 }
                 catch { /* continua */ }
@@ -138,8 +138,7 @@ public class WebRtcService : IAsyncDisposable
         _cts = null;
     }
 
-    // ── Captura GDI de janela ─────────────────────────────────────────────
-
+    // Captura GDI de janela
     private static byte[] CaptureWindow(IntPtr hwnd, out int width, out int height)
     {
         GetWindowRect(hwnd, out var rect);
@@ -179,15 +178,30 @@ public class WebRtcService : IAsyncDisposable
         return bytes;
     }
 
-    // ── Encoder BGRA → JPEG ───────────────────────────────────────────────
-
+    // Encoder BGRA -> JPEG
     private static readonly ImageCodecInfo JpegCodec =
         ImageCodecInfo.GetImageEncoders().First(e => e.MimeType == "image/jpeg");
 
-    private static byte[] BgraToJpeg(byte[] bgra, int width, int height, int quality = 55)
+    /// <summary>
+    /// Converte BGRA bruto para JPEG.
+    /// targetHeight: altura alvo em pixels (0 = nativa, sem redimensionamento).
+    /// A largura e calculada mantendo a proporcao original.
+    /// </summary>
+    private static byte[] BgraToJpeg(byte[] bgra, int width, int height,
+                                      int targetHeight = 720, int quality = 55)
     {
-        int dstW = Math.Min(width, 1280);
-        int dstH = (int)(height * ((double)dstW / width));
+        int dstH, dstW;
+        if (targetHeight <= 0 || targetHeight >= height)
+        {
+            // Nativa ou resolucao maior que a fonte -> sem redimensionar
+            dstW = width;
+            dstH = height;
+        }
+        else
+        {
+            dstH = targetHeight;
+            dstW = (int)(width * ((double)dstH / height));
+        }
 
         using var src = new Bitmap(width, height, PixelFormat.Format32bppArgb);
         var bd = src.LockBits(new Rectangle(0, 0, width, height),
