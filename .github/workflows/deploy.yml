@@ -37,6 +37,9 @@ jobs:
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
     steps:
     - name: Download artifact
       uses: actions/download-artifact@v4
@@ -46,9 +49,9 @@ jobs:
     - name: Setup SSH
       run: |
         mkdir -p ~/.ssh
-        echo "${{ secrets.VPS_SSH_KEY }}" > ~/.ssh/deploy_key
+        printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
         chmod 600 ~/.ssh/deploy_key
-        ssh-keyscan -H ${{ secrets.VPS_HOST }} >> ~/.ssh/known_hosts
+        ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts
 
     - name: Upload to VPS
-      run: scp -i ~/.ssh/deploy_key JaClipei.exe root@${{ secrets.VPS_HOST }}:/opt/screenshare/releases/JaClipei-latest.exe
+      run: scp -i ~/.ssh/deploy_key JaClipei.exe root@"$VPS_HOST":/opt/screenshare/releases/JaClipei-latest.exe
