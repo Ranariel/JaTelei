@@ -3,7 +3,6 @@
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
-    <UseWindowsForms>true</UseWindowsForms>
     <AssemblyName>JaClipei</AssemblyName>
     <RootNamespace>JaClipei.Client</RootNamespace>
     <Nullable>enable</Nullable>
