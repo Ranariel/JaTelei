@@ -30,11 +30,13 @@ jobs:
       run: dotnet publish JaClipei.Client/JaClipei.Client.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true -o publish
 
     - name: Upload to VPS
-      uses: appleboy/scp-action@v0.1.7
-      with:
-        host: ${{ secrets.VPS_HOST }}
-        username: root
-        key: ${{ secrets.VPS_SSH_KEY }}
-        source: "publish/JaClipei.exe"
-        target: "/opt/screenshare/releases/JaClipei-latest.exe"
-        strip_components: 1
+      shell: powershell
+      env:
+        SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        VPS_HOST: ${{ secrets.VPS_HOST }}
+      run: |
+        $keyPath = "$env:TEMP\deploy_key"
+        $env:SSH_KEY | Out-File -FilePath $keyPath -Encoding ascii -NoNewline
+        icacls $keyPath /inheritance:r /grant:r "${env:USERNAME}:R"
+        scp -i $keyPath -o StrictHostKeyChecking=no publish\JaClipei.exe "root@${env:VPS_HOST}:/opt/screenshare/releases/JaClipei-latest.exe"
+        Remove-Item $keyPath
