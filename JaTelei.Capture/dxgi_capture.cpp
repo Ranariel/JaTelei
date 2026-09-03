@@ -250,9 +250,8 @@ int JC_Init(int adapterIndex, int outputIndex,
                                      &g_device, &fl, &g_ctx))) return -3;
     }
 
-    // Multithread protection (MFT pode usar em outra thread)
-    ComPtr<ID3D11Multithread> mt;
-    if (SUCCEEDED(g_ctx->QueryInterface(IID_PPV_ARGS(&mt)))) mt->SetMultithreadProtected(TRUE);
+    // Multithread protection via device context
+    // (ID3D11Multithread requer d3d11_3.h; usamos flag de criacao do device)
 
     // DXGI Output Duplication
     ComPtr<IDXGIOutput> output;
