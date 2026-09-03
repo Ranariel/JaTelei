@@ -1,19 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
+using JaClipei.Client.Models;
 using JaClipei.Client.Services;
 
 namespace JaClipei.Client.Views;
-
-public enum ShareType { Screen, Window, Game }
-
-public class ShareTarget
-{
-    public ShareType Type        { get; init; }
-    public IntPtr    WindowHandle { get; init; }
-    public string    DisplayName  { get; init; } = "";
-    // For Screen: bounds (null = primary)
-    public System.Windows.Rect? MonitorBounds { get; init; }
-}
 
 public partial class SharePickerDialog : Window
 {
@@ -36,7 +26,6 @@ public partial class SharePickerDialog : Window
         var monitors = WindowEnumService.GetMonitors();
         if (monitors.Count <= 1)
         {
-            // Apenas 1 monitor → seleciona direto, sem lista
             Result = new ShareTarget
             {
                 Type        = ShareType.Screen,
@@ -47,7 +36,6 @@ public partial class SharePickerDialog : Window
         }
         else
         {
-            // Múltiplos monitores → mostra lista
             ShowList("Selecione o monitor:", monitors.Select(m => (object)m).ToList());
         }
     }
@@ -64,7 +52,6 @@ public partial class SharePickerDialog : Window
     {
         _currentType = ShareType.Game;
         SetSelected(BtnJogo, BtnTela, BtnJanela);
-        // Jogo = mesma lista de janelas, mas label diferente
         var windows = WindowEnumService.GetVisibleWindows(excludeSelf: true);
         ShowList("Selecione o jogo em execução:", windows.Select(w => (object)w).ToList());
     }
@@ -81,18 +68,17 @@ public partial class SharePickerDialog : Window
 
     private void ShowList(string label, List<object> items)
     {
-        ListLabel.Text   = label;
-        ItemsList.ItemsSource = items;
+        ListLabel.Text         = label;
+        ItemsList.ItemsSource  = items;
         ItemsList.SelectedItem = null;
-        ListPanel.Visibility = Visibility.Visible;
-        BtnConfirm.IsEnabled = false;
+        ListPanel.Visibility   = Visibility.Visible;
+        BtnConfirm.IsEnabled   = false;
         Result = null;
     }
 
     private void ItemsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (ItemsList.SelectedItem is null) { BtnConfirm.IsEnabled = false; return; }
-
         BtnConfirm.IsEnabled = true;
 
         switch (_currentType)
@@ -100,7 +86,7 @@ public partial class SharePickerDialog : Window
             case ShareType.Screen when ItemsList.SelectedItem is MonitorInfo m:
                 Result = new ShareTarget
                 {
-                    Type = ShareType.Screen,
+                    Type          = ShareType.Screen,
                     DisplayName   = m.DisplayName,
                     MonitorBounds = m.Bounds
                 };
@@ -121,8 +107,7 @@ public partial class SharePickerDialog : Window
 
     private void Confirm_Click(object sender, RoutedEventArgs e)
     {
-        if (Result is not null)
-            DialogResult = true;
+        if (Result is not null) DialogResult = true;
     }
 
     private void Cancel_Click(object sender, RoutedEventArgs e)
