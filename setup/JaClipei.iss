@@ -18,10 +18,8 @@ AppUpdatesURL=https://jaclipei.com/screenshare/api/update/latest
 DefaultDirName={autopf}\JaClipei
 DefaultGroupName=JaClipei
 AllowNoIcons=yes
-LicenseFile=
-OutputDir=installer
+OutputDir=..\installer
 OutputBaseFilename=JaClipeiSetup-{#MyAppVersion}
-SetupIconFile=
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -41,15 +39,14 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Criar ícone na Área de Trabalho"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "publish\{#MyExeName}"; DestDir: "{app}"; DestName: "JaClipei.exe"; Flags: ignoreversion
+Source: "..\publish\{#MyExeName}"; DestDir: "{app}"; DestName: "JaClipei.exe"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\JaClipei";            Filename: "{app}\JaClipei.exe"
+Name: "{group}\JaClipei";             Filename: "{app}\JaClipei.exe"
 Name: "{group}\Desinstalar JaClipei"; Filename: "{uninstallexe}"
 Name: "{commondesktop}\JaClipei";     Filename: "{app}\JaClipei.exe"; Tasks: desktopicon
 
 [Registry]
-; Registra para o auto-updater saber onde está instalado
 Root: HKLM; Subkey: "Software\JaClipei"; ValueType: string; ValueName: "InstallPath"; ValueData: "{app}"; Flags: uninsdeletekey
 
 [Run]
