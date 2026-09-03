@@ -2,7 +2,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Windows;
+using JaClipei.Client.Models;
 using SIPSorcery.Net;
 
 namespace JaClipei.Client.Services;
@@ -34,10 +34,6 @@ public class WebRtcService : IAsyncDisposable
 
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
     [DllImport("user32.dll")] static extern bool PrintWindow(IntPtr h, IntPtr hdc, uint flags);
-    [DllImport("gdi32.dll")]  static extern bool BitBlt(IntPtr dst, int dx, int dy, int dw, int dh,
-                                                         IntPtr src, int sx, int sy, uint rop);
-    [DllImport("user32.dll")] static extern IntPtr GetWindowDC(IntPtr h);
-    [DllImport("user32.dll")] static extern int ReleaseDC(IntPtr h, IntPtr hdc);
 
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int Left, Top, Right, Bottom; }
@@ -91,12 +87,6 @@ public class WebRtcService : IAsyncDisposable
 
     // ── Captura ───────────────────────────────────────────────────────────
 
-    /// <summary>
-    /// Inicia captura.
-    /// target = null → tela completa (via ScreenCaptureService/DLL)
-    /// target.WindowHandle != 0 → captura janela específica (GDI PrintWindow)
-    /// target.MonitorBounds != null → captura monitor específico (GDI BitBlt)
-    /// </summary>
     public void StartCapture(int fps = 15, ShareTarget? target = null)
     {
         _cts = new CancellationTokenSource();
@@ -105,7 +95,8 @@ public class WebRtcService : IAsyncDisposable
 
         Task.Run(async () =>
         {
-            bool useNative = target is null || (target.WindowHandle == IntPtr.Zero && target.MonitorBounds is null);
+            bool useNative = target is null ||
+                             (target.WindowHandle == IntPtr.Zero && target.MonitorBounds is null);
 
             if (useNative) ScreenCaptureService.Initialize();
 
@@ -120,17 +111,11 @@ public class WebRtcService : IAsyncDisposable
                         int w = 0, h = 0;
 
                         if (useNative)
-                        {
                             raw = ScreenCaptureService.CaptureFrame(out w, out h);
-                        }
                         else if (target!.WindowHandle != IntPtr.Zero)
-                        {
                             raw = CaptureWindow(target.WindowHandle, out w, out h);
-                        }
                         else if (target!.MonitorBounds is System.Windows.Rect bounds)
-                        {
                             raw = CaptureRegion((int)bounds.X, (int)bounds.Y, (int)bounds.Width, (int)bounds.Height, out w, out h);
-                        }
 
                         if (raw != null && w > 0 && h > 0)
                             _dc!.send(BgraToJpeg(raw, w, h));
@@ -160,7 +145,6 @@ public class WebRtcService : IAsyncDisposable
         GetWindowRect(hwnd, out var rect);
         width  = rect.Right  - rect.Left;
         height = rect.Bottom - rect.Top;
-
         if (width <= 0 || height <= 0) { width = 1; height = 1; return new byte[4]; }
 
         using var bmp = new Bitmap(width, height, PixelFormat.Format32bppArgb);
