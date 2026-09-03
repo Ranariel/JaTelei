@@ -48,6 +48,46 @@
             <Setter Property="Foreground"  Value="#89b4fa"/>
         </Style>
 
+        <Style x:Key="FpsBtn" TargetType="Button">
+            <Setter Property="Background"     Value="#313244"/>
+            <Setter Property="Foreground"     Value="#cdd6f4"/>
+            <Setter Property="BorderBrush"    Value="#45475a"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding"        Value="0"/>
+            <Setter Property="Height"         Value="34"/>
+            <Setter Property="Cursor"         Value="Hand"/>
+            <Setter Property="FontWeight"     Value="SemiBold"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border x:Name="Bd"
+                                Background="{TemplateBinding Background}"
+                                BorderBrush="{TemplateBinding BorderBrush}"
+                                BorderThickness="{TemplateBinding BorderThickness}"
+                                CornerRadius="6">
+                            <ContentPresenter HorizontalAlignment="Center"
+                                              VerticalAlignment="Center"/>
+                        </Border>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#89b4fa"/>
+                                <Setter TargetName="Bd" Property="Background"   Value="#45475a"/>
+                            </Trigger>
+                            <Trigger Property="IsPressed" Value="True">
+                                <Setter TargetName="Bd" Property="Background" Value="#585b70"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <Style x:Key="FpsBtnSelected" TargetType="Button" BasedOn="{StaticResource FpsBtn}">
+            <Setter Property="Background"  Value="#1e3a5f"/>
+            <Setter Property="BorderBrush" Value="#89b4fa"/>
+            <Setter Property="Foreground"  Value="#89b4fa"/>
+        </Style>
+
         <Style x:Key="ListItemStyle" TargetType="ListBoxItem">
             <Setter Property="Foreground"        Value="#cdd6f4"/>
             <Setter Property="Background"        Value="Transparent"/>
@@ -77,18 +117,18 @@
 
     <StackPanel Margin="24">
 
-        <!-- Título -->
+        <!-- Titulo -->
         <TextBlock Text="O que deseja compartilhar?"
                    FontSize="16" FontWeight="SemiBold"
                    Foreground="#cdd6f4" Margin="0,0,0,20"/>
 
-        <!-- Opções de tipo -->
+        <!-- Opcoes de tipo -->
         <UniformGrid Rows="1" Columns="3" HorizontalAlignment="Center">
 
             <Button x:Name="BtnTela"  Style="{StaticResource TypeBtn}"
                     Margin="6,0" Click="BtnTela_Click">
                 <StackPanel HorizontalAlignment="Center">
-                    <TextBlock Text="🖥️" FontSize="28" HorizontalAlignment="Center"/>
+                    <TextBlock Text="&#128421;" FontSize="28" HorizontalAlignment="Center"/>
                     <TextBlock Text="Tela"    Margin="0,6,0,0" HorizontalAlignment="Center"
                                FontWeight="Medium"/>
                 </StackPanel>
@@ -97,7 +137,7 @@
             <Button x:Name="BtnJanela" Style="{StaticResource TypeBtn}"
                     Margin="6,0" Click="BtnJanela_Click">
                 <StackPanel HorizontalAlignment="Center">
-                    <TextBlock Text="🪟" FontSize="28" HorizontalAlignment="Center"/>
+                    <TextBlock Text="&#129695;" FontSize="28" HorizontalAlignment="Center"/>
                     <TextBlock Text="Janela" Margin="0,6,0,0" HorizontalAlignment="Center"
                                FontWeight="Medium"/>
                 </StackPanel>
@@ -106,7 +146,7 @@
             <Button x:Name="BtnJogo"  Style="{StaticResource TypeBtn}"
                     Margin="6,0" Click="BtnJogo_Click">
                 <StackPanel HorizontalAlignment="Center">
-                    <TextBlock Text="🎮" FontSize="28" HorizontalAlignment="Center"/>
+                    <TextBlock Text="&#127918;" FontSize="28" HorizontalAlignment="Center"/>
                     <TextBlock Text="Jogo"   Margin="0,6,0,0" HorizontalAlignment="Center"
                                FontWeight="Medium"/>
                 </StackPanel>
@@ -114,17 +154,17 @@
 
         </UniformGrid>
 
-        <!-- Lista de seleção (Janela / Jogo / Monitor) -->
+        <!-- Lista de selecao (Janela / Jogo / Monitor) -->
         <Border x:Name="ListPanel" Visibility="Collapsed"
                 Background="#181825" CornerRadius="8"
-                Margin="0,20,0,0" Padding="12">
+                Margin="0,16,0,0" Padding="12">
             <StackPanel>
                 <TextBlock x:Name="ListLabel"
                            Text="Selecione a janela:"
                            Foreground="#a6adc8" FontSize="12"
                            Margin="0,0,0,8"/>
                 <ListBox x:Name="ItemsList"
-                         MaxHeight="220"
+                         MaxHeight="200"
                          Background="Transparent"
                          BorderThickness="0"
                          ItemContainerStyle="{StaticResource ListItemStyle}"
@@ -132,7 +172,63 @@
             </StackPanel>
         </Border>
 
-        <!-- Rodapé -->
+        <!-- Configuracoes de qualidade -->
+        <Border x:Name="QualityPanel" Visibility="Collapsed"
+                Background="#181825" CornerRadius="8"
+                Margin="0,16,0,0" Padding="16">
+            <StackPanel>
+                <TextBlock Text="Configuracoes de qualidade"
+                           Foreground="#a6adc8" FontSize="12" FontWeight="SemiBold"
+                           Margin="0,0,0,14"/>
+
+                <!-- Resolucao -->
+                <Grid Margin="0,0,0,12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="90"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="Resolucao" Foreground="#cdd6f4"
+                               VerticalAlignment="Center"/>
+                    <ComboBox x:Name="CboResolution" Grid.Column="1"
+                              Background="#313244" Foreground="#cdd6f4"
+                              BorderBrush="#45475a" BorderThickness="1"
+                              Padding="8,5"
+                              SelectionChanged="CboResolution_SelectionChanged"/>
+                </Grid>
+
+                <!-- FPS -->
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="90"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Text="FPS" Foreground="#cdd6f4"
+                               VerticalAlignment="Center"/>
+                    <UniformGrid Grid.Column="1" Rows="1" Columns="3" Height="34">
+                        <Button x:Name="BtnFps30"  Content="30 fps"
+                                Margin="0,0,6,0" Tag="30"
+                                Style="{StaticResource FpsBtnSelected}"
+                                Click="BtnFps_Click"/>
+                        <Button x:Name="BtnFps60"  Content="60 fps"
+                                Margin="0,0,6,0" Tag="60"
+                                Style="{StaticResource FpsBtn}"
+                                Click="BtnFps_Click"/>
+                        <Button x:Name="BtnFps120" Content="120 fps"
+                                Tag="120"
+                                Style="{StaticResource FpsBtn}"
+                                Click="BtnFps_Click"/>
+                    </UniformGrid>
+                </Grid>
+
+                <!-- Dica -->
+                <TextBlock Margin="0,12,0,0"
+                           Foreground="#6c7086" FontSize="11"
+                           TextWrapping="Wrap"
+                           Text="A qualidade percebida depende principalmente da sua internet. FPS alto e resolucao alta exigem mais largura de banda."/>
+            </StackPanel>
+        </Border>
+
+        <!-- Rodape -->
         <Grid Margin="0,20,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
