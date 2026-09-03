@@ -1,23 +1,30 @@
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using JaClipei.Client.Models;
 using SIPSorcery.Net;
 using SIPSorceryMedia.Abstractions;
-using SIPSorceryMedia.Windows;
 
 namespace JaClipei.Client.Services;
 
 /// <summary>
 /// WebRTC peer-to-peer via SIPSorcery.
-/// Video = H.264 via MediaStreamTrack (Windows MediaFoundation).
+/// Video = H.264 via Windows Media Foundation (MfH264Encoder / MfH264Decoder).
+/// Sender: GDI/DXGI capture → MfH264Encoder → RTCPeerConnection.SendVideo().
+/// Receiver: RTCPeerConnection.OnVideoFrameReceived → MfH264Decoder → FrameReceived.
 /// </summary>
 public class WebRtcService : IAsyncDisposable
 {
     private RTCPeerConnection? _pc;
     private CancellationTokenSource? _cts;
-    private WindowsVideoEndPoint? _videoSink;   // lado receptor: decodifica H264 → BGRA
+    private MfH264Decoder?   _decoder;    // receptor: decodifica H264 → BGRA
+
+    // Resolução esperada no lado receptor (deve refletir o que o sender envia).
+    // Pode ser atualizada via SetReceiveResolution() antes da negociação.
+    private int _rxWidth  = 1280;
+    private int _rxHeight =  720;
 
     private static readonly RTCConfiguration Config = new()
     {
@@ -29,11 +36,17 @@ public class WebRtcService : IAsyncDisposable
 
     /// <summary>Dispara com pixels BGRA brutos + dimensões (receptor).</summary>
     public event Action<byte[], int, int>? FrameReceived;
-    public event Action<string>? IceCandidateReady;
+    public event Action<string>?           IceCandidateReady;
 
     public bool IsVideoTrackReady =>
-        _pc?.iceConnectionState == RTCIceConnectionState.connected ||
-        _pc?.iceConnectionState == RTCIceConnectionState.completed;
+        _pc?.iceConnectionState == RTCIceConnectionState.connected;
+
+    /// <summary>Informa ao receptor qual resolução esperar (antes de CreateAnswerAsync).</summary>
+    public void SetReceiveResolution(int width, int height)
+    {
+        _rxWidth  = width;
+        _rxHeight = height;
+    }
 
     // ── P/Invoke GDI (captura de janelas) ─────────────────────────────────
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr h, out RECT r);
@@ -58,7 +71,7 @@ public class WebRtcService : IAsyncDisposable
 
         var offer = _pc.createOffer();
         _pc.setLocalDescription(offer);
-        return offer.sdp;
+        return await Task.FromResult(offer.sdp);
     }
 
     public Task SetRemoteAnswerAsync(string sdp)
@@ -77,22 +90,20 @@ public class WebRtcService : IAsyncDisposable
     {
         _pc = new RTCPeerConnection(Config);
 
-        // Endpoint que decodifica H264 → BGRA via Windows Media Foundation
-        _videoSink = new WindowsVideoEndPoint();
-        _videoSink.OnVideoSinkDecodedSample += (bmp, w, h, stride, pixFmt) =>
-            FrameReceived?.Invoke(bmp, (int)w, (int)h);
+        // Decodificador H264 → BGRA via Windows Media Foundation
+        _decoder = new MfH264Decoder();
+        int rxW = _rxWidth, rxH = _rxHeight;   // captura local para o lambda
 
-        // Repassa cada pacote RTP de vídeo ao decodificador
-        _pc.OnRtpPacketReceived += (ep, media, packet) =>
+        // OnVideoFrameReceived recebe frames H264 já remontados (após reassembly RTP)
+        _pc.OnVideoFrameReceived += (IPEndPoint ep, uint ts, byte[] frame, VideoFormat fmt) =>
         {
-            if (media == SDPMediaTypesEnum.video)
-                _videoSink.GotVideoRtp(ep,
-                    packet.Header.SyncSource,
-                    packet.Header.SequenceNumber,
-                    packet.Header.Timestamp,
-                    packet.Header.PayloadType,
-                    packet.Header.MarkerBit == 1,
-                    packet.Payload);
+            try
+            {
+                var (bgra, w, h) = _decoder.Decode(frame, rxW, rxH);
+                if (bgra != null)
+                    FrameReceived?.Invoke(bgra, w, h);
+            }
+            catch { /* tolera erros de decodificação isolados */ }
         };
 
         var videoTrack = new MediaStreamTrack(
@@ -121,18 +132,18 @@ public class WebRtcService : IAsyncDisposable
         return Task.CompletedTask;
     }
 
-    // ── Captura ───────────────────────────────────────────────────────────
+    // ── Captura + encode ──────────────────────────────────────────────────
 
     public void StartCapture(int fps = 15, ShareTarget? target = null)
     {
         _cts = new CancellationTokenSource();
         var token = _cts.Token;
 
-        int effectiveFps     = target?.Fps > 0 ? target.Fps : fps;
-        int resolutionHeight = target?.ResolutionHeight ?? 720;
-        var delay            = TimeSpan.FromMilliseconds(1000.0 / effectiveFps);
-        // H.264 clock: 90 000 Hz
-        uint rtpDuration     = (uint)(90_000.0 / effectiveFps);
+        int  effectiveFps      = target?.Fps > 0 ? target.Fps : fps;
+        int  resolutionHeight  = target?.ResolutionHeight ?? 720;
+        var  delay             = TimeSpan.FromMilliseconds(1000.0 / effectiveFps);
+        // H.264 RTP clock = 90 000 Hz
+        uint rtpDuration       = (uint)(90_000.0 / effectiveFps);
 
         bool useNative = target is null ||
                          (target.WindowHandle == IntPtr.Zero && target.MonitorBounds is null);
@@ -141,50 +152,61 @@ public class WebRtcService : IAsyncDisposable
         {
             if (useNative) ScreenCaptureService.Initialize();
 
-            // Endpoint com encoder H264 via Windows MF, em modo "fonte externa"
-            using var videoSource = new WindowsVideoEndPoint();
-            videoSource.OnVideoSourceEncodedSample += (duration, sample, _) =>
-            {
-                try { _pc?.SendVideo(duration, sample); }
-                catch { /* conexão ainda não pronta */ }
-            };
+            MfH264Encoder? encoder = null;
+            int encoderW = 0, encoderH = 0;
 
-            while (!token.IsCancellationRequested)
+            try
             {
-                var t0 = DateTime.UtcNow;
-                try
+                while (!token.IsCancellationRequested)
                 {
-                    byte[]? raw = null;
-                    int w = 0, h = 0;
-
-                    if (useNative)
-                        raw = ScreenCaptureService.CaptureFrame(out w, out h);
-                    else if (target!.WindowHandle != IntPtr.Zero)
-                        raw = CaptureWindow(target.WindowHandle, out w, out h);
-                    else if (target!.MonitorBounds is System.Windows.Rect bounds)
-                        raw = CaptureRegion((int)bounds.X, (int)bounds.Y,
-                                            (int)bounds.Width, (int)bounds.Height,
-                                            out w, out h);
-
-                    if (raw != null && w > 0 && h > 0)
+                    var t0 = DateTime.UtcNow;
+                    try
                     {
-                        var (bgra, dstW, dstH) = ResizeBgra(raw, w, h, resolutionHeight);
-                        // Alimenta o encoder; resultado chega em OnVideoSourceEncodedSample
-                        videoSource.ExternalVideoSourceRawSample(
-                            (uint)(1000.0 / effectiveFps),
-                            dstW, dstH,
-                            bgra,
-                            VideoPixelFormatsEnum.Bgra);
+                        byte[]? raw = null;
+                        int w = 0, h = 0;
+
+                        if (useNative)
+                            raw = ScreenCaptureService.CaptureFrame(out w, out h);
+                        else if (target!.WindowHandle != IntPtr.Zero)
+                            raw = CaptureWindow(target.WindowHandle, out w, out h);
+                        else if (target!.MonitorBounds is System.Windows.Rect bounds)
+                            raw = CaptureRegion((int)bounds.X, (int)bounds.Y,
+                                                (int)bounds.Width, (int)bounds.Height,
+                                                out w, out h);
+
+                        if (raw != null && w > 0 && h > 0)
+                        {
+                            var (bgra, dstW, dstH) = ResizeBgra(raw, w, h, resolutionHeight);
+
+                            // Recria o encoder se as dimensões mudaram (ex: janela redimensionada)
+                            if (encoder == null || dstW != encoderW || dstH != encoderH)
+                            {
+                                encoder?.Dispose();
+                                encoder  = new MfH264Encoder(dstW, dstH, effectiveFps);
+                                encoderW = dstW;
+                                encoderH = dstH;
+                            }
+
+                            var h264 = encoder.Encode(bgra, dstW, dstH);
+                            if (h264?.Length > 0)
+                            {
+                                try { _pc?.SendVideo(rtpDuration, h264); }
+                                catch { /* conexão ainda não pronta */ }
+                            }
+                        }
                     }
+                    catch { /* tolera falhas isoladas de captura */ }
+
+                    var wait = delay - (DateTime.UtcNow - t0);
+                    if (wait > TimeSpan.Zero)
+                        await Task.Delay(wait, token).ConfigureAwait(false);
                 }
-                catch { /* tolera falhas isoladas de captura */ }
-
-                var wait = delay - (DateTime.UtcNow - t0);
-                if (wait > TimeSpan.Zero)
-                    await Task.Delay(wait, token).ConfigureAwait(false);
             }
-
-            if (useNative) ScreenCaptureService.Shutdown();
+            finally
+            {
+                encoder?.Dispose();
+                if (useNative) ScreenCaptureService.Shutdown();
+            }
         }, token);
     }
 
@@ -263,7 +285,8 @@ public class WebRtcService : IAsyncDisposable
     public async ValueTask DisposeAsync()
     {
         StopCapture();
-        _videoSink?.Dispose();
+        _decoder?.Dispose();
+        _decoder = null;
         _pc?.Close("dispose");
         await ValueTask.CompletedTask;
     }
