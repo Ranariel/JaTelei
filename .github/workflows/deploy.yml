@@ -64,40 +64,4 @@ jobs:
       with:
         name: JaTelei
         path: installer/JaTeleiSetup-${{ env.VERSION }}.exe
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    env:
-      VPS_HOST: ${{ secrets.VPS_HOST }}
-      VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
-      VERSION: 1.0.${{ github.run_number }}
-    steps:
-    - name: Download artifact
-      uses: actions/download-artifact@v4
-      with:
-        name: JaTelei
-
-    - name: Setup SSH
-      run: |
-        mkdir -p ~/.ssh
-        printf '%s\n' "$VPS_SSH_KEY" > ~/.ssh/deploy_key
-        chmod 600 ~/.ssh/deploy_key
-        echo "Host $VPS_HOST"             >> ~/.ssh/config
-        echo "  StrictHostKeyChecking no" >> ~/.ssh/config
-        echo "  UserKnownHostsFile /dev/null" >> ~/.ssh/config
-        chmod 600 ~/.ssh/config
-
-    - name: Upload installer to VPS
-      run: |
-        scp -i ~/.ssh/deploy_key "JaTeleiSetup-${VERSION}.exe" root@"$VPS_HOST":/opt/screenshare/releases/
-
-    - name: Remove old releases (keep last 3)
-      run: |
-        ssh -i ~/.ssh/deploy_key root@"$VPS_HOST" \
-          "ls -t /opt/screenshare/releases/JaTeleiSetup-1.*.exe 2>/dev/null | tail -n +4 | xargs rm -f"
-
-    - name: Update latest version on VPS
-      run: |
-        ssh -i ~/.ssh/deploy_key root@"$VPS_HOST" \
-          "echo ${VERSION} > /opt/screenshare/latest_version.txt"
+        retention-days: 7
