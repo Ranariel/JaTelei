@@ -35,26 +35,30 @@ public class WebRtcService : IAsyncDisposable
     private static readonly string LogPath =
         Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
 
-    private static readonly RTCConfiguration Config = new()
+    private static RTCConfiguration BuildRtcConfig()
     {
-        iceServers = new List<RTCIceServer>
+        var cfg = App.Config;
+        var servers = new List<RTCIceServer>
         {
             new() { urls = "stun:stun.l.google.com:19302" },
             new() { urls = "stun:stun1.l.google.com:19302" },
-            new()
-            {
-                urls       = "turn:TURN_SERVER_REMOVED:3478",
-                username   = "jatelei",
-                credential = "TURN_CREDENTIAL_REMOVED"
-            },
-            new()
-            {
-                urls       = "turn:TURN_SERVER_REMOVED:3478?transport=tcp",
-                username   = "jatelei",
-                credential = "TURN_CREDENTIAL_REMOVED"
-            },
+        };
+
+        var turnUrl  = cfg["Ice:TurnUrl"];
+        var turnUser = cfg["Ice:TurnUsername"];
+        var turnCred = cfg["Ice:TurnCredential"];
+
+        if (!string.IsNullOrWhiteSpace(turnUrl) && !string.IsNullOrWhiteSpace(turnUser))
+        {
+            servers.Add(new() { urls = turnUrl,                    username = turnUser, credential = turnCred });
+            servers.Add(new() { urls = $"{turnUrl}?transport=tcp", username = turnUser, credential = turnCred });
         }
-    };
+
+        return new RTCConfiguration { iceServers = servers };
+    }
+
+    private static readonly Lazy<RTCConfiguration> _lazyRtcConfig = new(BuildRtcConfig);
+    private static RTCConfiguration RtcConfig => _lazyRtcConfig.Value;
 
     public event Action<byte[], int, int>? FrameReceived;
     public event Action<string>?           IceCandidateReady;
@@ -76,7 +80,7 @@ public class WebRtcService : IAsyncDisposable
 
     public async Task<string> CreateOfferAsync()
     {
-        _pc = new RTCPeerConnection(Config);
+        _pc = new RTCPeerConnection(RtcConfig);
 
         var videoTrack = new MediaStreamTrack(
             new List<VideoFormat> { new VideoFormat(VideoCodecsEnum.H264, 96) },
@@ -131,7 +135,7 @@ public class WebRtcService : IAsyncDisposable
 
     public Task<string> CreateAnswerAsync(string offerSdp)
     {
-        _pc = new RTCPeerConnection(Config);
+        _pc = new RTCPeerConnection(RtcConfig);
         _framesRecv = 0;
         _decoder = new MfH264Decoder();
 
