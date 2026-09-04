@@ -16,6 +16,13 @@ jobs:
       with:
         dotnet-version: '8.0.x'
 
+    - name: Cache NuGet
+      uses: actions/cache@v4
+      with:
+        path: ~/.nuget/packages
+        key: nuget-${{ hashFiles('**/*.csproj') }}
+        restore-keys: nuget-
+
     - name: Setup MSVC environment
       uses: ilammy/msvc-dev-cmd@v1
       with:
