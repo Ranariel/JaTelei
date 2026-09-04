@@ -304,12 +304,44 @@
                 </StackPanel>
             </Border>
 
+            <!-- Prévia da captura -->
+            <Border x:Name="PreviewPanel" Visibility="Collapsed"
+                    Background="#0A0A0A"
+                    BorderBrush="#2A2A2A" BorderThickness="1"
+                    CornerRadius="10"
+                    Margin="0,12,0,0" Padding="12">
+                <StackPanel>
+                    <TextBlock Text="PRÉVIA"
+                               Foreground="#555555"
+                               FontSize="10"
+                               FontWeight="SemiBold"
+                               Margin="2,0,0,10"/>
+                    <Border CornerRadius="6" ClipToBounds="True"
+                            Background="#070707" MinHeight="80">
+                        <Grid>
+                            <Image x:Name="PreviewImage"
+                                   MaxHeight="200"
+                                   Stretch="Uniform"
+                                   HorizontalAlignment="Stretch"
+                                   RenderOptions.BitmapScalingMode="HighQuality"/>
+                            <TextBlock x:Name="PreviewLoading"
+                                       Text="Carregando prévia..."
+                                       Foreground="#444444"
+                                       FontSize="11"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Margin="0,28"/>
+                        </Grid>
+                    </Border>
+                </StackPanel>
+            </Border>
+
             <!-- Configurações de qualidade -->
             <Border x:Name="QualityPanel" Visibility="Collapsed"
                     Background="#0A0A0A"
                     BorderBrush="#2A2A2A" BorderThickness="1"
                     CornerRadius="10"
-                    Margin="0,16,0,0" Padding="16">
+                    Margin="0,12,0,0" Padding="16">
                 <StackPanel>
                     <TextBlock Text="Qualidade"
                                Foreground="#888888"
