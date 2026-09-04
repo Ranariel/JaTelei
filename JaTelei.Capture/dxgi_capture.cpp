@@ -262,8 +262,13 @@ static HRESULT InitD3D(EngineState* e)
                            &e->d3dDevice, &fl, &e->d3dCtx);
     CHECK_HR(hr, "D3D11CreateDevice");
 
-    if (SUCCEEDED(e->d3dDevice.As(&e->d3dMultithread)))
-        e->d3dMultithread->SetMultithreadProtected(TRUE);
+    {
+        ID3D11Multithread* pMT = nullptr;
+        if (SUCCEEDED(e->d3dDevice->QueryInterface(IID_PPV_ARGS(&pMT)))) {
+            e->d3dMultithread.Attach(pMT);
+            pMT->SetMultithreadProtected(TRUE);
+        }
+    }
 
     return S_OK;
 }
@@ -274,16 +279,21 @@ static HRESULT InitD3D(EngineState* e)
 static HRESULT InitDxgiDup(EngineState* e)
 {
     ComPtr<IDXGIDevice> dxgiDev;
-    e->d3dDevice.As(&dxgiDev);
+    e->d3dDevice->QueryInterface(IID_PPV_ARGS(&dxgiDev));
     ComPtr<IDXGIAdapter> ad; dxgiDev->GetAdapter(&ad);
-    ComPtr<IDXGIAdapter1> ad1; ad.As(&ad1);
+    ComPtr<IDXGIAdapter1> ad1;
+    ad->QueryInterface(IID_PPV_ARGS(&ad1));
 
     ComPtr<IDXGIOutput> out;
     if (FAILED(ad1->EnumOutputs(e->params.outputIndex, &out)))
         ad1->EnumOutputs(0, &out);
     CHECK_HR(out ? S_OK : E_FAIL, "EnumOutputs");
 
-    out.As(&e->dxgiOutput);
+    {
+        IDXGIOutput1* pO1 = nullptr;
+        out->QueryInterface(IID_PPV_ARGS(&pO1));
+        e->dxgiOutput.Attach(pO1);
+    }
     HRESULT hr = e->dxgiOutput->DuplicateOutput(e->d3dDevice.Get(), &e->dxgiDup);
     CHECK_HR(hr, "DuplicateOutput");
 
@@ -307,9 +317,9 @@ static HRESULT InitWGC(EngineState* e)
 
         // Wrap D3D11 device as WinRT IDirect3DDevice
         ComPtr<IDXGIDevice> dxgiDev;
-        e->d3dDevice.As(&dxgiDev);
-        ComPtr<IInspectable> inspectable;
-        HRESULT hr = CreateDirect3D11DeviceFromDXGIDevice(dxgiDev.Get(), &inspectable);
+        e->d3dDevice->QueryInterface(IID_PPV_ARGS(&dxgiDev));
+        winrt::com_ptr<IInspectable> inspectable;
+        HRESULT hr = CreateDirect3D11DeviceFromDXGIDevice(dxgiDev.Get(), inspectable.put());
         if (FAILED(hr)) return hr;
         auto rtDevice = inspectable.as<wgdd::IDirect3DDevice>();
 
@@ -326,7 +336,7 @@ static HRESULT InitWGC(EngineState* e)
             if (FAILED(hr)) return hr;
         } else {
             // Get HMONITOR from adapter output
-            ComPtr<IDXGIDevice> dev; e->d3dDevice.As(&dev);
+            ComPtr<IDXGIDevice> dev; e->d3dDevice->QueryInterface(IID_PPV_ARGS(&dev));
             ComPtr<IDXGIAdapter> ad; dev->GetAdapter(&ad);
             ComPtr<IDXGIOutput> out;
             ad->EnumOutputs(e->params.outputIndex, &out);
@@ -361,14 +371,12 @@ static HRESULT InitWGC(EngineState* e)
             auto frame = pool.TryGetNextFrame();
             if (!frame) return;
             auto surface = frame.Surface();
-            // Get underlying D3D11 texture via IDirect3DDxgiInterfaceAccess
-            winrt::com_ptr<IDirect3DDxgiInterfaceAccess> access =
-                surface.as<IDirect3DDxgiInterfaceAccess>();
-            if (!access) return;
+            // Get underlying D3D11 texture via QI on IUnknown
+            ::IUnknown* unk = winrt::get_unknown(surface);
             ID3D11Texture2D* rawTex = nullptr;
-            if (FAILED(access->GetInterface(IID_PPV_ARGS(&rawTex)))) return;
+            if (FAILED(unk->QueryInterface(IID_PPV_ARGS(&rawTex)))) return;
             std::lock_guard<std::mutex> lk(ctx->mtx);
-            ctx->lastTex.Attach(rawTex); // takes ownership (GetInterface called AddRef)
+            ctx->lastTex.Attach(rawTex); // takes ownership (QI called AddRef)
             ctx->newFrame = true;
         });
 
@@ -406,10 +414,18 @@ static HRESULT InitVideoProcessor(EngineState* e)
     HRESULT hr = e->d3dDevice->CreateTexture2D(&td, nullptr, &e->nv12Tex);
     CHECK_HR(hr, "CreateTexture2D NV12");
 
-    hr = e->d3dDevice.As(&e->videoDevice);
-    CHECK_HR(hr, "As ID3D11VideoDevice");
-    hr = e->d3dCtx.As(&e->videoCtx);
-    CHECK_HR(hr, "As ID3D11VideoContext");
+    {
+        ID3D11VideoDevice* pVD = nullptr;
+        hr = e->d3dDevice->QueryInterface(IID_PPV_ARGS(&pVD));
+        e->videoDevice.Attach(pVD);
+    }
+    CHECK_HR(hr, "QI ID3D11VideoDevice");
+    {
+        ID3D11VideoContext* pVC = nullptr;
+        hr = e->d3dCtx->QueryInterface(IID_PPV_ARGS(&pVC));
+        e->videoCtx.Attach(pVC);
+    }
+    CHECK_HR(hr, "QI ID3D11VideoContext");
 
     D3D11_VIDEO_PROCESSOR_CONTENT_DESC vpDesc = {};
     vpDesc.InputFrameFormat = D3D11_VIDEO_FRAME_FORMAT_PROGRESSIVE;
@@ -725,7 +741,11 @@ static bool CaptureFrameToNV12(EngineState* e)
             InitDxgiDup(e);
             return false;
         }
-        res.As(&srcTex);
+        {
+            ID3D11Texture2D* pTex = nullptr;
+            res->QueryInterface(IID_PPV_ARGS(&pTex));
+            srcTex.Attach(pTex);
+        }
     }
     if (!srcTex) {
         if (!e->useWGC) e->dxgiDup->ReleaseFrame();
@@ -993,7 +1013,12 @@ JCAPI void JC_SetBitrate(int bitrateKbps)
 {
     if (!g_eng || !g_eng->encoder || bitrateKbps <= 0) return;
     ComPtr<ICodecAPI> codec;
-    if (SUCCEEDED(g_eng->encoder.As(&codec))) {
+    {
+        ICodecAPI* pCA = nullptr;
+        g_eng->encoder->QueryInterface(IID_PPV_ARGS(&pCA));
+        codec.Attach(pCA);
+    }
+    if (codec) {
         VARIANT v = {}; v.vt = VT_UI4;
         v.uintVal = (UINT)(bitrateKbps * 1000);
         codec->SetValue(&CODECAPI_AVEncCommonMeanBitRate, &v);
