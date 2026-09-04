@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -13,6 +14,12 @@ public partial class ReceiveViewModel : ObservableObject, IAsyncDisposable
     private readonly SignalingService _signaling;
     private readonly string _fromUserId;
 
+    // Armazenado para poder desinscrever corretamente em DisposeAsync
+    private readonly Action<string> _iceCandidateReadyHandler;
+
+    private static readonly string LogPath =
+        Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
+
     [ObservableProperty] private WriteableBitmap? _frame;
     [ObservableProperty] private string _statusText = "Conectando…";
 
@@ -24,10 +31,13 @@ public partial class ReceiveViewModel : ObservableObject, IAsyncDisposable
         _signaling = signaling;
         _fromUserId = fromUserId;
 
-        _webRtc.FrameReceived    += OnFrameReceived;
-        _webRtc.IceStateChanged  += OnIceStateChanged;
-        _webRtc.IceCandidateReady += async c =>
+        _webRtc.FrameReceived   += OnFrameReceived;
+        _webRtc.IceStateChanged += OnIceStateChanged;
+
+        // Guarda referência ao lambda para poder desinscrever em DisposeAsync
+        _iceCandidateReadyHandler = async c =>
             await _signaling.SendIceCandidateAsync(_fromUserId, c);
+        _webRtc.IceCandidateReady += _iceCandidateReadyHandler;
     }
 
     /// <summary>Atualiza status com base no estado ICE.</summary>
@@ -51,6 +61,14 @@ public partial class ReceiveViewModel : ObservableObject, IAsyncDisposable
     /// <summary>Recebe pixels BGRA brutos + dimensões vindos do WebRtcService.</summary>
     private void OnFrameReceived(byte[] bgra, int width, int height)
     {
+        // Guard contra frames inválidos que crashariam o WriteableBitmap
+        if (bgra == null || width <= 0 || height <= 0)
+        {
+            File.AppendAllText(LogPath,
+                $"[ReceiveVM/Frame] {DateTime.Now}: frame inválido bgra={bgra?.Length ?? -1} {width}x{height}\n");
+            return;
+        }
+
         Application.Current.Dispatcher.Invoke(() =>
         {
             try
@@ -63,9 +81,19 @@ public partial class ReceiveViewModel : ObservableObject, IAsyncDisposable
                     Frame = new WriteableBitmap(
                         width, height, 96, 96,
                         PixelFormats.Bgra32, null);
+                    File.AppendAllText(LogPath,
+                        $"[ReceiveVM/Frame] {DateTime.Now}: WriteableBitmap criado {width}x{height}\n");
                 }
 
                 int stride = width * 4;
+                // Sanity check: bgra deve ter exatamente stride * height bytes
+                if (bgra.Length < stride * height)
+                {
+                    File.AppendAllText(LogPath,
+                        $"[ReceiveVM/Frame] {DateTime.Now}: bgra muito pequeno: {bgra.Length} < {stride * height}\n");
+                    return;
+                }
+
                 Frame.Lock();
                 Frame.WritePixels(
                     new Int32Rect(0, 0, width, height),
@@ -74,7 +102,13 @@ public partial class ReceiveViewModel : ObservableObject, IAsyncDisposable
 
                 StatusText = $"Recebendo — {width}×{height}";
             }
-            catch { /* frame inválido — ignora */ }
+            catch (Exception ex)
+            {
+                // Log detalhado — anteriormente silencioso, o que escondia bugs reais
+                File.AppendAllText(LogPath,
+                    $"[ReceiveVM/Frame] {DateTime.Now}: ERRO {ex.GetType().Name}: {ex.Message}\n" +
+                    $"  Frame={Frame?.PixelWidth}x{Frame?.PixelHeight} bgra={bgra.Length} {width}x{height}\n");
+            }
         });
     }
 
@@ -83,8 +117,9 @@ public partial class ReceiveViewModel : ObservableObject, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        _webRtc.FrameReceived   -= OnFrameReceived;
-        _webRtc.IceStateChanged -= OnIceStateChanged;
+        _webRtc.FrameReceived     -= OnFrameReceived;
+        _webRtc.IceStateChanged   -= OnIceStateChanged;
+        _webRtc.IceCandidateReady -= _iceCandidateReadyHandler; // agora corretamente desinscrito
         await _webRtc.DisposeAsync();
     }
 }

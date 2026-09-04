@@ -132,29 +132,59 @@ public partial class MainWindow : Window
     private async Task StartSendingAsync(Friend friend, ShareTarget target)
     {
         var webRtc = new WebRtcService();
+        var friendId = friend.Id.ToString();
 
-        webRtc.IceCandidateReady += async c =>
-            await _signaling.SendIceCandidateAsync(friend.Id.ToString(), c);
+        // ── Handlers com referência nomeada para poder desinscrever ──
 
-        _signaling.AnswerReceived += async (from, sdp) =>
+        Action<string> iceCandidateReadyHandler = async c =>
+            await _signaling.SendIceCandidateAsync(friendId, c);
+        webRtc.IceCandidateReady += iceCandidateReadyHandler;
+
+        Action<string, string>? answerReceivedHandler = null;
+        answerReceivedHandler = async (from, sdp) =>
         {
-            if (from != friend.Id.ToString()) return;
+            if (from != friendId) return;
             try { await webRtc.SetRemoteAnswerAsync(sdp); }
-            catch (Exception ex) { File.AppendAllText(LogPath, $"[Answer/Sender] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n"); }
+            catch (Exception ex)
+            {
+                File.AppendAllText(LogPath, $"[Answer/Sender] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
+            }
         };
+        _signaling.AnswerReceived += answerReceivedHandler;
 
-        _signaling.IceCandidateReceived += async (from, cand) =>
+        Action<string, string>? iceCandReceivedHandler = null;
+        iceCandReceivedHandler = async (from, cand) =>
         {
-            if (from != friend.Id.ToString()) return;
+            if (from != friendId) return;
             try { await webRtc.AddIceCandidateAsync(cand); }
-            catch (Exception ex) { File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n"); }
+            catch (Exception ex)
+            {
+                File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
+            }
         };
+        _signaling.IceCandidateReceived += iceCandReceivedHandler;
 
         var offerSdp = await webRtc.CreateOfferAsync();
-        await _signaling.SendOfferAsync(friend.Id.ToString(), offerSdp);
+        await _signaling.SendOfferAsync(friendId, offerSdp);
 
-        // Inicia captura; o loop interno envia assim que a conexão ICE estiver pronta
+        // Inicia captura; o loop interno envia assim que a conexão ICE estiver pronta.
+        // Quando ICE conectar, ForceKeyframe() é chamado via oniceconnectionstatechange.
         webRtc.StartCapture(target: target);
+
+        // Desinscrevemos handlers quando o WebRtc for descartado (conexão encerrada).
+        // O DisposeAsync é chamado externamente (ex.: usuário fecha janela ou stop).
+        // Para capturar esse momento, registramos no IceStateChanged:
+        webRtc.IceStateChanged += state =>
+        {
+            if (state == "closed" || state == "failed")
+            {
+                webRtc.IceCandidateReady       -= iceCandidateReadyHandler;
+                _signaling.AnswerReceived       -= answerReceivedHandler;
+                _signaling.IceCandidateReceived -= iceCandReceivedHandler;
+                File.AppendAllText(LogPath,
+                    $"[Sender] {DateTime.Now}: ICE {state} — handlers sender desincritos\n");
+            }
+        };
     }
 
     // ── Receiver side ──────────────────────────────────────────────────────
@@ -165,12 +195,18 @@ public partial class MainWindow : Window
         // para que candidatos que chegam enquanto o usuário decide sejam
         // bufferizados em _pendingCandidates e não perdidos.
         var webRtc = new WebRtcService();
-        _signaling.IceCandidateReceived += async (from, cand) =>
+
+        // Handler nomeado para poder desinscrever quando o receiver for encerrado
+        Action<string, string> iceCandReceivedHandler = async (from, cand) =>
         {
             if (from != fromUserId) return;
             try { await webRtc.AddIceCandidateAsync(cand); }
-            catch (Exception ex) { File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n"); }
+            catch (Exception ex)
+            {
+                File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
+            }
         };
+        _signaling.IceCandidateReceived += iceCandReceivedHandler;
 
         Dispatcher.Invoke(() =>
         {
@@ -182,20 +218,26 @@ public partial class MainWindow : Window
 
             if (result != MessageBoxResult.Yes)
             {
-                // Usuário recusou — descarta o WebRtcService criado
+                // Usuário recusou — desinscrevemos o handler e descartamos o WebRtcService
+                _signaling.IceCandidateReceived -= iceCandReceivedHandler;
                 _ = webRtc.DisposeAsync().AsTask();
                 return;
             }
-            _ = StartReceivingAsync(fromUserId, offerSdp, webRtc);
+            _ = StartReceivingAsync(fromUserId, offerSdp, webRtc, iceCandReceivedHandler);
         });
     }
 
-    private async Task StartReceivingAsync(string fromUserId, string offerSdp, WebRtcService webRtc)
+    private async Task StartReceivingAsync(
+        string fromUserId,
+        string offerSdp,
+        WebRtcService webRtc,
+        Action<string, string> iceCandReceivedHandler)
     {
-        // IceCandidateReceived já foi subscrito em OnOfferReceived antes do dialog
         var vm = new ReceiveViewModel(webRtc, _signaling, fromUserId);
         vm.StopRequested += () =>
         {
+            // Desinscrevemos o handler de ICE do receiver ao parar
+            _signaling.IceCandidateReceived -= iceCandReceivedHandler;
             _ = webRtc.DisposeAsync().AsTask();
             Dispatcher.Invoke(ShowFriends);
         };
