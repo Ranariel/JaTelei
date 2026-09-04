@@ -25,6 +25,9 @@ public class WebRtcService : IAsyncDisposable
     private readonly List<RTCIceCandidateInit> _pendingCandidates = new();
     private readonly object _candidateLock = new();
 
+    // Contadores para logging por fase
+    private int _framesRecv;
+
     private static readonly string LogPath =
         Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
 
@@ -90,6 +93,21 @@ public class WebRtcService : IAsyncDisposable
         {
             File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: iceState={state}\n");
             IceStateChanged?.Invoke(state.ToString());
+
+            // ═══════════════════════════════════════════════════════════════
+            // FIX CRÍTICO: forçar IDR quando o ICE *realmente* conecta.
+            // SetRemoteAnswerAsync() chama ForceKeyframe() mas isso ocorre
+            // antes da conectividade ICE ser estabelecida — em redes distintas
+            // isso pode demorar vários segundos. Nesse intervalo o encoder
+            // avança para P-frames e o decoder do receptor nunca vê SPS+PPS+IDR.
+            // ═══════════════════════════════════════════════════════════════
+            if (state == RTCIceConnectionState.connected ||
+                state == RTCIceConnectionState.completed)
+            {
+                ScreenCaptureService.ForceKeyframe();
+                File.AppendAllText(LogPath,
+                    $"[Sender] {DateTime.Now}: ICE {state} → ForceKeyframe() disparado\n");
+            }
         };
         _pc.onconnectionstatechange += state =>
             File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: connState={state}\n");
@@ -107,8 +125,12 @@ public class WebRtcService : IAsyncDisposable
             type = RTCSdpType.answer,
             sdp  = sdp
         });
-        // Pede keyframe ao encoder assim que o peer aceita
+        // Pre-prime do encoder: o ICE ainda não conectou, mas já garante que
+        // o próximo grupo de NALs seja SPS+PPS+IDR (mesmo que chegue cedo demais
+        // ao receptor, o ForceKeyframe no oniceconnectionstatechange é o definitivo).
         ScreenCaptureService.ForceKeyframe();
+        File.AppendAllText(LogPath,
+            $"[Sender] {DateTime.Now}: answer recebido → ForceKeyframe() pre-prime\n");
         return Task.CompletedTask;
     }
 
@@ -117,6 +139,7 @@ public class WebRtcService : IAsyncDisposable
     public Task<string> CreateAnswerAsync(string offerSdp)
     {
         _pc = new RTCPeerConnection(Config);
+        _framesRecv = 0;
 
         _decoder = new MfH264Decoder();
 
@@ -125,11 +148,26 @@ public class WebRtcService : IAsyncDisposable
             try
             {
                 // Garante formato Annex B (start code 0x00 0x00 0x00 0x01)
-                // SIPSorcery pode entregar NAL units com ou sem start code
                 var h264 = EnsureAnnexB(frame);
+
+                // [DIAGNÓSTICO] Loga tipo dos NAL units recebidos.
+                // Primeiros 10 frames + a cada 300 (≈10s @ 30fps) depois.
+                if (_framesRecv < 10 || _framesRecv % 300 == 0)
+                {
+                    var nalTypes = DetectNalTypes(h264);
+                    File.AppendAllText(LogPath,
+                        $"[Recv/NAL] {DateTime.Now}: frame#{_framesRecv} {h264.Length}B NALs=[{nalTypes}]\n");
+                }
+                _framesRecv++;
+
                 var (bgra, w, h) = _decoder.Decode(h264);
                 if (bgra != null)
+                {
+                    if (_framesRecv <= 5 || (_framesRecv - 1) % 300 == 0)
+                        File.AppendAllText(LogPath,
+                            $"[Recv/Decode] {DateTime.Now}: frame#{_framesRecv-1} decodificado {w}x{h}\n");
                     FrameReceived?.Invoke(bgra, w, h);
+                }
             }
             catch (Exception ex)
             {
@@ -234,6 +272,53 @@ public class WebRtcService : IAsyncDisposable
         foreach (var t in new[] { "relay", "srflx", "prflx", "host" })
             if (candidateJson.Contains($"typ {t}")) return t;
         return "?";
+    }
+
+    /// <summary>
+    /// Detecta tipos de NAL unit em um buffer H264 Annex B.
+    /// Retorna string como "SPS PPS IDR" ou "P" para logging de diagnóstico.
+    /// </summary>
+    private static string DetectNalTypes(byte[] data)
+    {
+        var sb = new System.Text.StringBuilder();
+        int i  = 0;
+        while (i < data.Length - 4)
+        {
+            int advance = 0;
+            int nalByte = -1;
+
+            if (data[i] == 0 && data[i+1] == 0 && data[i+2] == 0 && data[i+3] == 1)
+            {
+                advance = 4;
+                if (i + 4 < data.Length) nalByte = data[i + 4];
+            }
+            else if (data[i] == 0 && data[i+1] == 0 && data[i+2] == 1)
+            {
+                advance = 3;
+                if (i + 3 < data.Length) nalByte = data[i + 3];
+            }
+
+            if (advance > 0)
+            {
+                if (nalByte >= 0)
+                {
+                    int nalType = nalByte & 0x1F;
+                    if (sb.Length > 0) sb.Append(' ');
+                    sb.Append(nalType switch
+                    {
+                        7 => "SPS",
+                        8 => "PPS",
+                        5 => "IDR",
+                        1 => "P",
+                        6 => "SEI",
+                        _ => $"NAL{nalType}"
+                    });
+                }
+                i += advance;
+            }
+            else i++;
+        }
+        return sb.Length > 0 ? sb.ToString() : "?";
     }
 
     // ── Annex B ───────────────────────────────────────────────────────────────

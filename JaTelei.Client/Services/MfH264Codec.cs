@@ -40,6 +40,12 @@ internal static class MfNative
     public static readonly Guid MF_MT_FRAME_RATE     = new("c459a2e8-3d2c-4e44-b132-fee5156c7bb0");
     public static readonly Guid MF_MT_AVG_BITRATE    = new("20332624-fb0d-4d9e-bd0d-cbf6786c102e");
     public static readonly Guid MF_MT_INTERLACE_MODE = new("e2724bb8-e676-4806-b4b2-a8d6efb44ccd");
+    /// <summary>
+    /// MF_MT_DEFAULT_STRIDE — stride em bytes da primeira linha do plano Y para NV12/YUV.
+    /// IMFAttributes::GetUINT32, slot 7. GUID: {644b4e48-1e02-4516-b0eb-c01ca9d49ac6}.
+    /// O valor pode ser negativo (bottom-up) mas MFTs de vídeo H264 sempre retornam positivo.
+    /// </summary>
+    public static readonly Guid MF_MT_DEFAULT_STRIDE = new("644b4e48-1e02-4516-b0eb-c01ca9d49ac6");
 
     public static readonly Guid MFMediaType_Video  = new("73646976-0000-0010-8000-00aa00389b71");
     public static readonly Guid MFVideoFormat_H264 = new("34363248-0000-0010-8000-00aa00389b71");
@@ -62,6 +68,9 @@ internal static class MfNative
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     public delegate int Fn_SetUINT32(IntPtr self, ref Guid key, uint value);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    public delegate int Fn_GetUINT32(IntPtr self, ref Guid key, out uint pValue);
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     public delegate int Fn_SetUINT64(IntPtr self, ref Guid key, ulong value);
@@ -171,6 +180,10 @@ internal static class MfNative
     // IMFAttributes::GetUINT64 = slot 8
     public static int GetUINT64(IntPtr attr, Guid key, out ulong val)
         => Vtbl<Fn_GetUINT64>(attr, 8)(attr, ref key, out val);
+
+    // IMFAttributes::GetUINT32 = slot 7
+    public static int GetUINT32(IntPtr attr, Guid key, out uint val)
+        => Vtbl<Fn_GetUINT32>(attr, 7)(attr, ref key, out val);
 
     /// <summary>Pack (width, height) into UINT64 for MF_MT_FRAME_SIZE.</summary>
     public static ulong PackWH(uint w, uint h) => ((ulong)w << 32) | h;
@@ -407,12 +420,18 @@ public sealed class MfH264Encoder : IDisposable
 ///
 /// Resolution is auto-detected from the H264 SPS NAL unit — no need to provide
 /// width/height upfront. On first keyframe the MFT fires MF_E_TRANSFORM_STREAM_CHANGE
-/// which we handle to learn the actual decoded dimensions.
+/// which we handle to learn the actual decoded dimensions and stride.
 /// </summary>
 public sealed class MfH264Decoder : IDisposable
 {
     private IntPtr _mft;
     private int    _width, _height;
+    /// <summary>
+    /// Stride real em bytes do plano Y (NV12). Pode ser maior que _width quando o MFT
+    /// alinha a stride a 16 bytes para SIMD. Exemplo: 1366 → stride=1376 (múltiplo de 16).
+    /// Obtido de MF_MT_DEFAULT_STRIDE no tipo de saída proposto pelo MFT após STREAM_CHANGE.
+    /// </summary>
+    private int    _stride;
     private long   _sampleTime;
     private bool   _streaming;
     private bool   _outputTypeSet;
@@ -459,33 +478,46 @@ public sealed class MfH264Decoder : IDisposable
 
     /// <summary>
     /// Called after MF_E_TRANSFORM_STREAM_CHANGE — queries the MFT for the actual
-    /// output format (width x height) and sets the NV12 output type accordingly.
+    /// output format (width x height x stride) and sets the NV12 output type.
+    ///
     /// IMFTransform::GetOutputCurrentType = slot 18
-    /// IMFAttributes::GetUINT64           = slot 8
+    /// IMFAttributes::GetUINT64           = slot 8  (frame size)
+    /// IMFAttributes::GetUINT32           = slot 7  (stride — may be signed int stored as UINT32)
     /// </summary>
     private void HandleStreamChange()
     {
-        // Query what the MFT decided the output format is
+        // Query what the MFT proposes as output format (filled by SPS parsing)
         int hr = MfNative.Vtbl<MfNative.Fn_GetCurrentType>(_mft, 18)(_mft, 0, out IntPtr mt);
         if (hr >= 0 && mt != IntPtr.Zero)
         {
             try
             {
+                // Frame size
                 hr = MfNative.GetUINT64(mt, MfNative.MF_MT_FRAME_SIZE, out ulong wh);
                 if (hr >= 0 && wh != 0)
                 {
                     _width  = (int)(wh >> 32);
                     _height = (int)(wh & 0xFFFF_FFFFUL);
                 }
+
+                // Stride — MFT aligns to 16 bytes for SIMD; may be > _width
+                hr = MfNative.GetUINT32(mt, MfNative.MF_MT_DEFAULT_STRIDE, out uint strideRaw);
+                if (hr >= 0 && strideRaw > 0)
+                    _stride = (int)strideRaw;
             }
             finally { MfNative.Release(ref mt); }
         }
 
-        // Fallback to 1920x1080 if query failed
+        // Fallback: derive size
         if (_width  <= 0) _width  = 1920;
         if (_height <= 0) _height = 1080;
+        // Fallback stride: align width to 16-byte boundary (matches CMSH264DecoderMFT behavior)
+        if (_stride <= 0) _stride = (_width + 15) & ~15;
 
-        // Now configure the output type: NV12 at the actual decoded resolution
+        System.IO.File.AppendAllText(LogPath,
+            $"[Decoder/StreamChange] {DateTime.Now}: {_width}x{_height} stride={_stride}\n");
+
+        // Configure the output type: NV12 at the actual decoded resolution
         MfNative.MFCreateMediaType(out var ot);
         try
         {
@@ -493,7 +525,11 @@ public sealed class MfH264Decoder : IDisposable
             MfNative.SetGUID  (ot, MfNative.MF_MT_SUBTYPE,    MfNative.MFVideoFormat_NV12);
             MfNative.SetUINT64(ot, MfNative.MF_MT_FRAME_SIZE, MfNative.PackWH((uint)_width, (uint)_height));
             hr = MfNative.Vtbl<MfNative.Fn_SetOutputType>(_mft, 16)(_mft, 0, ot, 0);
-            if (hr >= 0) _outputTypeSet = true;
+            if (hr >= 0)
+                _outputTypeSet = true;
+            else
+                System.IO.File.AppendAllText(LogPath,
+                    $"[Decoder/StreamChange] {DateTime.Now}: SetOutputType hr=0x{(uint)hr:X8}\n");
         }
         finally { MfNative.Release(ref ot); }
     }
@@ -525,7 +561,14 @@ public sealed class MfH264Decoder : IDisposable
             MfNative.Vtbl<MfNative.Fn_SetSampleDur> (sample, 38)(sample, dur);
             _sampleTime += dur;
 
-            MfNative.Vtbl<MfNative.Fn_ProcessInput>(_mft, 24)(_mft, 0, sample, 0);
+            // IMFTransform::ProcessInput — HRESULT now logged (previously silently ignored)
+            int hrPi = MfNative.Vtbl<MfNative.Fn_ProcessInput>(_mft, 24)(_mft, 0, sample, 0);
+            if (hrPi < 0)
+            {
+                System.IO.File.AppendAllText(LogPath,
+                    $"[Decoder/ProcessInput] {DateTime.Now}: hr=0x{(uint)hrPi:X8} ({h264Len}B)\n");
+                return (null, 0, 0);
+            }
         }
         finally { MfNative.Release(ref sample); MfNative.Release(ref buf); }
 
@@ -533,16 +576,18 @@ public sealed class MfH264Decoder : IDisposable
         if (nv12 == null || nv12.Length == 0) return (null, 0, 0);
         if (_width <= 0 || _height <= 0)      return (null, 0, 0);
 
-        return (Nv12ToBgra(nv12, _width, _height), _width, _height);
+        return (Nv12ToBgra(nv12, _width, _height, _stride), _width, _height);
     }
 
     private byte[]? DrainDecoder()
     {
         // CMSH264DecoderMFT provides its own samples (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES).
         // Always pass pSample = IntPtr.Zero; the MFT fills db.pSample on success.
-        // On MF_E_TRANSFORM_STREAM_CHANGE the output format changed — query it and retry once.
+        // On MF_E_TRANSFORM_STREAM_CHANGE the output format changed — query it and retry.
+        // Up to 3 attempts: first call may return STREAM_CHANGE, second sets output type,
+        // third delivers the actual decoded frame.
 
-        for (int attempt = 0; attempt < 2; attempt++)
+        for (int attempt = 0; attempt < 3; attempt++)
         {
             var db = new MfNative.MFT_OUTPUT_DATA_BUFFER
             {
@@ -566,15 +611,15 @@ public sealed class MfH264Decoder : IDisposable
             if (hr == MfNative.MF_E_TRANSFORM_STREAM_CHANGE)
             {
                 // Output format changed (first SPS decoded, or resolution change).
-                // Query actual output type and configure NV12 output.
+                // Query actual output type and configure NV12 output, then retry.
                 HandleStreamChange();
-                continue; // retry ProcessOutput with the new output type
+                continue;
             }
 
             if (hr < 0)
             {
                 System.IO.File.AppendAllText(LogPath,
-                    $"[Decoder] {DateTime.Now}: ProcessOutput hr=0x{(uint)hr:X8} w={_width} h={_height}\n");
+                    $"[Decoder/ProcessOutput] {DateTime.Now}: hr=0x{(uint)hr:X8} w={_width} h={_height} stride={_stride}\n");
                 return null;
             }
 
@@ -590,24 +635,35 @@ public sealed class MfH264Decoder : IDisposable
         return null;
     }
 
-    /// <summary>NV12 → BGRA, BT.601 integer math.</summary>
-    private static byte[] Nv12ToBgra(byte[] nv12, int w, int h)
+    /// <summary>
+    /// NV12 → BGRA, BT.601 integer math.
+    ///
+    /// IMPORTANT: <paramref name="stride"/> is the actual row stride of the NV12 buffer,
+    /// which may be larger than <paramref name="w"/> when the MFT aligns rows to 16 bytes.
+    /// Using w as stride on a non-aligned resolution produces garbled video.
+    ///
+    /// NV12 memory layout:
+    ///   Y  plane: stride * height bytes  (one byte per pixel)
+    ///   UV plane: stride * height/2 bytes (interleaved Cb/Cr, one pair per 2×2 block)
+    /// </summary>
+    private static byte[] Nv12ToBgra(byte[] nv12, int w, int h, int stride)
     {
         var bgra  = new byte[w * h * 4];
-        int uvOff = w * h;
+        // UV plane starts at stride * height (not w * h when stride > w)
+        int uvOff = stride * h;
 
         for (int y = 0; y < h; y++)
         {
-            int uvRow = (y / 2) * w;
+            int uvRow = (y / 2) * stride;
             for (int x = 0; x < w; x++)
             {
-                int yVal = nv12[y * w + x]             - 16;
-                int cb   = nv12[uvOff + uvRow + (x & ~1)]     - 128;
-                int cr   = nv12[uvOff + uvRow + (x & ~1) + 1] - 128;
+                int yVal = nv12[y * stride + x]              - 16;
+                int cb   = nv12[uvOff + uvRow + (x & ~1)]      - 128;
+                int cr   = nv12[uvOff + uvRow + (x & ~1) + 1]  - 128;
 
-                int r = (298 * yVal + 409 * cr          + 128) >> 8;
+                int r = (298 * yVal + 409 * cr           + 128) >> 8;
                 int g = (298 * yVal - 100 * cb - 208 * cr + 128) >> 8;
-                int b = (298 * yVal + 516 * cb          + 128) >> 8;
+                int b = (298 * yVal + 516 * cb           + 128) >> 8;
 
                 int di = (y * w + x) * 4;
                 bgra[di]     = (byte)Math.Clamp(b, 0, 255);
