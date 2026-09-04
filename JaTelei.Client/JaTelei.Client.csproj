@@ -4,11 +4,13 @@
     <TargetFramework>net8.0-windows10.0.17763.0</TargetFramework>
     <UseWPF>true</UseWPF>
     <AssemblyName>JaTelei</AssemblyName>
+    <Product>Já Telei Beta</Product>
+    <Copyright>JaClipei</Copyright>
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <RootNamespace>JaTelei.Client</RootNamespace>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>1.0.0</Version>
+    <Version>1.0</Version>
     <!-- Publica como EXE único e autocontido -->
     <PublishSingleFile>true</PublishSingleFile>
     <SelfContained>true</SelfContained>

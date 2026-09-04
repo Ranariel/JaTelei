@@ -61,6 +61,14 @@ public partial class SharePickerDialog : Window
 
         CboResolution.ItemsSource   = Resolutions;
         CboResolution.SelectedIndex = 4;   // 720p por padrao
+
+        // Cancela capture de prévia ao fechar a janela para evitar leak
+        Closed += (_, _) =>
+        {
+            _previewCts?.Cancel();
+            _previewCts?.Dispose();
+            _previewCts = null;
+        };
     }
 
     // Botoes de tipo
