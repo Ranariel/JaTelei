@@ -40,6 +40,17 @@ jobs:
       run: |
         (Get-Content JaTelei.Client/AppVersion.cs) -replace '"1\.0\.0"', '"${{ env.VERSION }}"' | Set-Content JaTelei.Client/AppVersion.cs
 
+    - name: Create appsettings.local.json
+      run: |
+        @"
+        {
+          "Ice": {
+            "TurnUsername": "${{ secrets.TURN_USERNAME }}",
+            "TurnCredential": "${{ secrets.TURN_CREDENTIAL }}"
+          }
+        }
+        "@ | Set-Content JaTelei.Client/appsettings.local.json
+
     - name: Publish .NET app
       run: dotnet publish JaTelei.Client/JaTelei.Client.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true -o publish
 

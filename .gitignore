@@ -17,3 +17,6 @@ JaClipei.Client/JaClipei.Capture.dll
 # dotnet
 *.user
 project.lock.json
+-e 
+# Configuração local com credenciais reais (gerado pelo CI via secrets)
+appsettings.local.json
