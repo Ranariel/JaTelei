@@ -33,7 +33,19 @@ public class WebRtcService : IAsyncDisposable
         iceServers = new List<RTCIceServer>
         {
             new() { urls = "stun:stun.l.google.com:19302" },
-            new() { urls = "stun:stun1.l.google.com:19302" }
+            new() { urls = "stun:stun1.l.google.com:19302" },
+            new()
+            {
+                urls       = "turn:TURN_SERVER_REMOVED:3478",
+                username   = "jatelei",
+                credential = "TURN_CREDENTIAL_REMOVED"
+            },
+            new()
+            {
+                urls       = "turns:TURN_SERVER_REMOVED:5349",
+                username   = "jatelei",
+                credential = "TURN_CREDENTIAL_REMOVED"
+            }
         }
     };
 
