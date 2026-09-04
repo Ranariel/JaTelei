@@ -101,8 +101,7 @@ public class WebRtcService : IAsyncDisposable
             // isso pode demorar vários segundos. Nesse intervalo o encoder
             // avança para P-frames e o decoder do receptor nunca vê SPS+PPS+IDR.
             // ═══════════════════════════════════════════════════════════════
-            if (state == RTCIceConnectionState.connected ||
-                state == RTCIceConnectionState.completed)
+            if (state == RTCIceConnectionState.connected)
             {
                 ScreenCaptureService.ForceKeyframe();
                 File.AppendAllText(LogPath,
