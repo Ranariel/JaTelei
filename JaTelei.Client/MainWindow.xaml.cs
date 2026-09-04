@@ -161,6 +161,17 @@ public partial class MainWindow : Window
 
     private void OnOfferReceived(string fromUserId, string offerSdp)
     {
+        // Cria WebRtcService e subscreve candidatos ICE ANTES do dialog,
+        // para que candidatos que chegam enquanto o usuário decide sejam
+        // bufferizados em _pendingCandidates e não perdidos.
+        var webRtc = new WebRtcService();
+        _signaling.IceCandidateReceived += async (from, cand) =>
+        {
+            if (from != fromUserId) return;
+            try { await webRtc.AddIceCandidateAsync(cand); }
+            catch (Exception ex) { File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n"); }
+        };
+
         Dispatcher.Invoke(() =>
         {
             var result = MessageBox.Show(
@@ -169,22 +180,19 @@ public partial class MainWindow : Window
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Question);
 
-            if (result != MessageBoxResult.Yes) return;
-            _ = StartReceivingAsync(fromUserId, offerSdp);
+            if (result != MessageBoxResult.Yes)
+            {
+                // Usuário recusou — descarta o WebRtcService criado
+                _ = webRtc.DisposeAsync().AsTask();
+                return;
+            }
+            _ = StartReceivingAsync(fromUserId, offerSdp, webRtc);
         });
     }
 
-    private async Task StartReceivingAsync(string fromUserId, string offerSdp)
+    private async Task StartReceivingAsync(string fromUserId, string offerSdp, WebRtcService webRtc)
     {
-        var webRtc = new WebRtcService();
-
-        _signaling.IceCandidateReceived += async (from, cand) =>
-        {
-            if (from != fromUserId) return;
-            try { await webRtc.AddIceCandidateAsync(cand); }
-            catch (Exception ex) { File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n"); }
-        };
-
+        // IceCandidateReceived já foi subscrito em OnOfferReceived antes do dialog
         var vm = new ReceiveViewModel(webRtc, _signaling, fromUserId);
         vm.StopRequested += () =>
         {
@@ -192,6 +200,8 @@ public partial class MainWindow : Window
             Dispatcher.Invoke(ShowFriends);
         };
 
+        // CreateAnswerAsync cria _pc e drena _pendingCandidates (candidatos
+        // que chegaram enquanto o dialog estava aberto já estão bufferizados)
         var answerSdp = await webRtc.CreateAnswerAsync(offerSdp);
         await _signaling.SendAnswerAsync(fromUserId, answerSdp);
 
