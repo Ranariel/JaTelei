@@ -7,7 +7,8 @@ namespace JaTelei.Client.Services;
 public class ApiService
 {
     private readonly HttpClient _http = new();
-    public const string Base = "https://jaclipei.com/screenshare/api";
+    public static string Base =>
+        App.Config["App:ApiBaseUrl"] ?? "https://jaclipei.com/screenshare/api";
 
     public string? Token { get; private set; }
     public Guid? UserId { get; private set; }

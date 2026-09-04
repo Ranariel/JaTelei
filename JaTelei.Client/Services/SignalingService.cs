@@ -5,7 +5,8 @@ namespace JaTelei.Client.Services;
 public class SignalingService
 {
     private HubConnection? _hub;
-    private const string HubUrl = "https://jaclipei.com/screenshare/hubs/signaling";
+    private static string HubUrl =>
+        App.Config["App:SignalingHubUrl"] ?? "https://jaclipei.com/screenshare/hubs/signaling";
 
     public event Action<string, string>? OfferReceived;
     public event Action<string, string>? AnswerReceived;

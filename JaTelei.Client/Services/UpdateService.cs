@@ -9,7 +9,8 @@ namespace JaTelei.Client.Services;
 public class UpdateService
 {
     private static readonly HttpClient _http = new();
-    private const string CheckUrl = "https://jaclipei.com/screenshare/api/update/latest";
+    private static string CheckUrl =>
+        App.Config["App:UpdateCheckUrl"] ?? "https://jaclipei.com/screenshare/api/update/latest";
 
     public record UpdateInfo(string Version, string DownloadUrl, string Filename);
 
