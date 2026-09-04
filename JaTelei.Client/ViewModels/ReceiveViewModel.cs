@@ -24,9 +24,28 @@ public partial class ReceiveViewModel : ObservableObject, IAsyncDisposable
         _signaling = signaling;
         _fromUserId = fromUserId;
 
-        _webRtc.FrameReceived += OnFrameReceived;
+        _webRtc.FrameReceived    += OnFrameReceived;
+        _webRtc.IceStateChanged  += OnIceStateChanged;
         _webRtc.IceCandidateReady += async c =>
             await _signaling.SendIceCandidateAsync(_fromUserId, c);
+    }
+
+    /// <summary>Atualiza status com base no estado ICE.</summary>
+    private void OnIceStateChanged(string state)
+    {
+        Application.Current.Dispatcher.Invoke(() =>
+        {
+            StatusText = state switch
+            {
+                "checking"     => "Estabelecendo conexão…",
+                "connected"    => "Conectado — aguardando vídeo…",
+                "completed"    => "Conectado — aguardando vídeo…",
+                "disconnected" => "Conexão perdida",
+                "failed"       => "Falha na conexão (NAT/firewall)",
+                "closed"       => "Conexão encerrada",
+                _              => $"ICE: {state}"
+            };
+        });
     }
 
     /// <summary>Recebe pixels BGRA brutos + dimensões vindos do WebRtcService.</summary>
@@ -64,7 +83,8 @@ public partial class ReceiveViewModel : ObservableObject, IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        _webRtc.FrameReceived -= OnFrameReceived;
+        _webRtc.FrameReceived   -= OnFrameReceived;
+        _webRtc.IceStateChanged -= OnIceStateChanged;
         await _webRtc.DisposeAsync();
     }
 }
