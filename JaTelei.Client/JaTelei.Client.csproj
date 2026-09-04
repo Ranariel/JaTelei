@@ -10,6 +10,7 @@
     <RootNamespace>JaTelei.Client</RootNamespace>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Version>1.0</Version>
     <!-- Publica como EXE único e autocontido -->
     <PublishSingleFile>true</PublishSingleFile>

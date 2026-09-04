@@ -36,6 +36,23 @@ jobs:
         cmake -B JaTelei.Capture/build -S JaTelei.Capture -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
         cmake --build JaTelei.Capture/build
 
+    - name: Download FFmpeg DLLs (GPL shared, win64)
+      run: |
+        $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
+        Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
+        Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
+        $binDir = Get-ChildItem ffmpeg_tmp -Recurse -Directory | Where-Object { $_.Name -eq "bin" } | Select-Object -First 1
+        New-Item -ItemType Directory -Force -Path ffmpeg_dlls | Out-Null
+        foreach ($dll in @("avcodec-61.dll","avutil-59.dll","swscale-8.dll","swresample-5.dll")) {
+          $src = Join-Path $binDir.FullName $dll
+          if (Test-Path $src) {
+            Copy-Item $src ffmpeg_dlls/
+          } else {
+            Write-Warning "DLL not found in bin: $dll"
+          }
+        }
+        Get-ChildItem ffmpeg_dlls
+
     - name: Set version
       run: echo "VERSION=1.0.${{ github.run_number }}" >> $env:GITHUB_ENV
 
@@ -62,6 +79,9 @@ jobs:
         if (Test-Path "JaTelei.Client/JaTelei.Capture.dll") {
           Copy-Item "JaTelei.Client/JaTelei.Capture.dll" -Destination "publish/"
         }
+
+    - name: Copy FFmpeg DLLs into publish folder
+      run: Copy-Item ffmpeg_dlls\*.dll -Destination publish\
 
     - name: Rename exe with version
       run: Rename-Item publish\JaTelei.exe "JaTelei-${{ env.VERSION }}.exe"

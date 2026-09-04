@@ -1,741 +1,551 @@
-// MfH264Codec.cs
-// Windows Media Foundation H264 encoder (BGRA→H264 Annex B)
-// and decoder (H264 Annex B→BGRA) using COM vtable P/Invoke.
-// No third-party dependencies — relies on inbox Windows MFTs.
+// FFmpeg-based H264 encoder/decoder (replaces Windows Media Foundation implementation)
+// Works on all Windows editions including N/KN without Media Feature Pack.
+// Requires FFmpeg DLLs alongside the EXE: avcodec-61.dll, avutil-59.dll,
+// swscale-8.dll, swresample-5.dll (from BtbN GPL shared build).
 
+using System;
 using System.Runtime.InteropServices;
 
-namespace JaTelei.Client.Services;
-
-// ── Native declarations ───────────────────────────────────────────────────────
-
-internal static class MfNative
+namespace JaTelei.Client.Services
 {
-    [DllImport("mfplat.dll", ExactSpelling = true)]
-    public static extern int MFStartup(uint version, uint dwFlags = 0);
+    // -----------------------------------------------------------------------
+    // Minimal FFmpeg P/Invoke bindings (subset needed for H264 encode/decode)
+    // -----------------------------------------------------------------------
+    internal static unsafe class Ffmpeg
+    {
+        const string AvCodec  = "avcodec-61";
+        const string AvUtil   = "avutil-59";
+        const string SwScale  = "swscale-8";
 
-    [DllImport("mfplat.dll", ExactSpelling = true)]
-    public static extern int MFCreateMediaType(out IntPtr ppMFType);
+        // ---- avutil --------------------------------------------------------
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void* av_malloc(ulong size);
 
-    [DllImport("mfplat.dll", ExactSpelling = true)]
-    public static extern int MFCreateMemoryBuffer(uint cbMaxLength, out IntPtr ppBuffer);
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void av_free(void* ptr);
 
-    [DllImport("mfplat.dll", ExactSpelling = true)]
-    public static extern int MFCreateSample(out IntPtr ppIMFSample);
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern AVFrame* av_frame_alloc();
 
-    [DllImport("mfplat.dll", ExactSpelling = true)]
-    public static extern int MFTEnumEx(
-        ref Guid guidCategory, uint Flags,
-        IntPtr pInputType, IntPtr pOutputType,
-        out IntPtr pppMFTActivate, out uint pcMFTActivate);
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void av_frame_free(AVFrame** frame);
 
-    [DllImport("ole32.dll", ExactSpelling = true)]
-    public static extern void CoTaskMemFree(IntPtr pv);
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int av_frame_get_buffer(AVFrame* frame, int align);
 
-    [DllImport("ole32.dll", ExactSpelling = true)]
-    public static extern int CoCreateInstance(
-        ref Guid rclsid, IntPtr pUnkOuter, uint dwClsContext,
-        ref Guid riid, out IntPtr ppv);
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int av_frame_make_writable(AVFrame* frame);
 
-    // ── GUIDs ────────────────────────────────────────────────────────────────
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void av_frame_unref(AVFrame* frame);
 
-    public static readonly Guid CLSID_MSH264EncoderMFT  = new("6CA50344-051A-4DED-9779-A43305165E35");
-    public static readonly Guid CLSID_CMSH264DecoderMFT = new("62CE7E72-4C71-4D20-B15D-452831A87D9D");
-    public static readonly Guid IID_IMFTransform         = new("bf94c121-5b05-4e6f-9000-ba5ac3c30e28");
-    public static readonly Guid MFT_CATEGORY_VIDEO_ENCODER = new("f79eac7d-e545-4387-bdee-d647d7bde42a");
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern AVDictionary** av_dict_alloc();  // not used directly
 
-    public static readonly Guid MF_MT_MAJOR_TYPE     = new("48eba18e-f8c9-4687-bf11-0a74c9f96a8f");
-    public static readonly Guid MF_MT_SUBTYPE        = new("f7e34c9a-42e8-4714-b74b-cb29d72c35e5");
-    public static readonly Guid MF_MT_FRAME_SIZE     = new("1652c33d-d6b2-4012-b834-72030849a37d");
-    public static readonly Guid MF_MT_FRAME_RATE     = new("c459a2e8-3d2c-4e44-b132-fee5156c7bb0");
-    public static readonly Guid MF_MT_AVG_BITRATE    = new("20332624-fb0d-4d9e-bd0d-cbf6786c102e");
-    public static readonly Guid MF_MT_INTERLACE_MODE = new("e2724bb8-e676-4806-b4b2-a8d6efb44ccd");
-    /// <summary>
-    /// MF_MT_DEFAULT_STRIDE — stride em bytes da primeira linha do plano Y para NV12/YUV.
-    /// IMFAttributes::GetUINT32, slot 7. GUID: {644b4e48-1e02-4516-b0eb-c01ca9d49ac6}.
-    /// O valor pode ser negativo (bottom-up) mas MFTs de vídeo H264 sempre retornam positivo.
-    /// </summary>
-    public static readonly Guid MF_MT_DEFAULT_STRIDE = new("644b4e48-1e02-4516-b0eb-c01ca9d49ac6");
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int av_dict_set(AVDictionary** pm, byte* key, byte* value, int flags);
 
-    public static readonly Guid MFMediaType_Video  = new("73646976-0000-0010-8000-00aa00389b71");
-    public static readonly Guid MFVideoFormat_H264 = new("34363248-0000-0010-8000-00aa00389b71");
-    public static readonly Guid MFVideoFormat_NV12 = new("3231564e-0000-0010-8000-00aa00389b71");
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void av_dict_free(AVDictionary** m);
 
-    // ── Constants ────────────────────────────────────────────────────────────
+        // ---- avcodec -------------------------------------------------------
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        public static extern AVCodec* avcodec_find_encoder_by_name(byte* name);
 
-    public const uint MF_VERSION                         = 0x00020070; // MF 2.7 (Win10+)
-    public const uint CLSCTX_INPROC_SERVER               = 1;
-    public const uint MFT_OUTPUT_STREAM_PROVIDES_SAMPLES = 0x00000100;
-    public const int  MF_E_TRANSFORM_NEED_MORE_INPUT     = unchecked((int)0xC00D6D72);
-    public const int  MF_E_TRANSFORM_STREAM_CHANGE       = unchecked((int)0xC00D6D61);
-    public const uint MFT_MESSAGE_NOTIFY_BEGIN_STREAMING = 0x10000000;
-    public const uint MFT_MESSAGE_NOTIFY_START_OF_STREAM = 0x20000000;
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        public static extern AVCodec* avcodec_find_decoder(uint id);
 
-    // ── Delegate types for vtable calls ──────────────────────────────────────
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        public static extern AVCodecContext* avcodec_alloc_context3(AVCodec* codec);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate uint Fn_Release(IntPtr self);
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void avcodec_free_context(AVCodecContext** avctx);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_SetUINT32(IntPtr self, ref Guid key, uint value);
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int avcodec_open2(AVCodecContext* avctx, AVCodec* codec, AVDictionary** options);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_GetUINT32(IntPtr self, ref Guid key, out uint pValue);
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        public static extern AVPacket* av_packet_alloc();
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_SetUINT64(IntPtr self, ref Guid key, ulong value);
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void av_packet_free(AVPacket** pkt);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_GetUINT64(IntPtr self, ref Guid key, out ulong pValue);
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void av_packet_unref(AVPacket* pkt);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_SetGUID(IntPtr self, ref Guid key, ref Guid value);
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int avcodec_send_frame(AVCodecContext* avctx, AVFrame* frame);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_GetOutputStreamInfo(IntPtr self, uint streamId,
-                                                out MFT_OUTPUT_STREAM_INFO info);
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_SetInputType(IntPtr self, uint streamId, IntPtr type, uint flags);
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int avcodec_receive_packet(AVCodecContext* avctx, AVPacket* avpkt);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_SetOutputType(IntPtr self, uint streamId, IntPtr type, uint flags);
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int avcodec_send_packet(AVCodecContext* avctx, AVPacket* avpkt);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_GetCurrentType(IntPtr self, uint streamId, out IntPtr ppType);
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int avcodec_receive_frame(AVCodecContext* avctx, AVFrame* frame);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_ProcessMessage(IntPtr self, uint msg, UIntPtr param);
+        [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int avcodec_parameters_from_context(AVCodecParameters* par, AVCodecContext* codec);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_ProcessInput(IntPtr self, uint streamId, IntPtr sample, uint flags);
+        // ---- swscale -------------------------------------------------------
+        [DllImport(SwScale, CallingConvention = CallingConvention.Cdecl)]
+        public static extern SwsContext* sws_getContext(
+            int srcW, int srcH, int srcFormat,
+            int dstW, int dstH, int dstFormat,
+            int flags, void* srcFilter, void* dstFilter, double* param);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_ActivateObject(IntPtr self, ref Guid riid, out IntPtr ppv);
+        [DllImport(SwScale, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int sws_scale(SwsContext* c,
+            byte** srcSlice, int* srcStride,
+            int srcSliceY, int srcSliceH,
+            byte** dst, int* dstStride);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_ProcessOutput(IntPtr self, uint flags, uint count,
-                                          ref MFT_OUTPUT_DATA_BUFFER outBuf, out uint status);
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_Lock(IntPtr self, out IntPtr data, IntPtr maxLen, out uint curLen);
+        [DllImport(SwScale, CallingConvention = CallingConvention.Cdecl)]
+        public static extern void sws_freeContext(SwsContext* swsContext);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_Unlock(IntPtr self);
+        // ---- error helper --------------------------------------------------
+        public static string AvErrStr(int errnum)
+        {
+            byte* buf = stackalloc byte[64];
+            av_strerror(errnum, buf, 64);
+            return Marshal.PtrToStringAnsi((IntPtr)buf) ?? errnum.ToString();
+        }
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_GetCurLen(IntPtr self, out uint len);
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        private static extern int av_strerror(int errnum, byte* errbuf, ulong errbuf_size);
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_SetCurLen(IntPtr self, uint len);
+        // ---- AV pixel formats ----------------------------------------------
+        public const int AV_PIX_FMT_BGRA   = 28;   // Windows GDI native
+        public const int AV_PIX_FMT_YUV420P = 0;   // libx264 preferred
+        public const int AV_PIX_FMT_BGR24  = 3;
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_SetSampleTime(IntPtr self, long time100ns);
+        // ---- Codec IDs -----------------------------------------------------
+        public const uint AV_CODEC_ID_H264 = 27;
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_SetSampleDur(IntPtr self, long dur100ns);
+        // ---- swscale flags -------------------------------------------------
+        public const int SWS_BILINEAR = 2;
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_GetBufByIndex(IntPtr self, uint idx, out IntPtr buf);
+        // ---- AVERROR constants (negative errno-style) ----------------------
+        public const int AVERROR_EAGAIN = -11;      // EAGAIN on Linux, mapped
+        public static int AVERROR_EOF   = -('E' | ('O' << 8) | ('F' << 16) | (' ' << 24)); // -541478725
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_AddBuffer(IntPtr self, IntPtr buf);
+        public static bool IsEagain(int ret)  => ret == AVERROR_EAGAIN || ret == -11;
+        public static bool IsEof(int ret)     => ret == -541478725;
+    }
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
-    public delegate int Fn_GetTotalLen(IntPtr self, out uint len);
-
-    // ── Structures ───────────────────────────────────────────────────────────
+    // -----------------------------------------------------------------------
+    // Opaque FFmpeg structs – only the fields we access are declared
+    // -----------------------------------------------------------------------
+#pragma warning disable CS0649  // field never assigned
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct AVCodec { public byte* name; /* ... */ }
 
     [StructLayout(LayoutKind.Sequential)]
-    public struct MFT_OUTPUT_STREAM_INFO
+    internal unsafe struct AVCodecContext
     {
-        public uint dwFlags;
-        public uint cbSize;
-        public uint cbAlignment;
+        public void*    av_class;
+        public int      log_level_offset;
+        public int      codec_type;         // AVMediaType
+        public AVCodec* codec;
+        public uint     codec_id;
+        public uint     codec_tag;
+        public void*    priv_data;
+        public void*    @internal;
+        public void*    opaque;
+        public long     bit_rate;
+        public int      bit_rate_tolerance;
+        public int      global_quality;
+        public int      compression_level;
+        public int      flags;
+        public int      flags2;
+        public byte*    extradata;
+        public int      extradata_size;
+        public AVRational time_base;
+        public AVRational pkt_timebase;
+        public AVRational framerate;
+        public int      ticks_per_frame;
+        public int      delay;
+        public int      width, height;
+        public int      coded_width, coded_height;
+        public int      gop_size;
+        public int      pix_fmt;
+        public void*    draw_horiz_band;
+        public void*    get_format;
+        public int      max_b_frames;
+        public float    b_quant_factor;
+        public float    b_quant_offset;
+        public float    i_quant_factor;
+        public float    i_quant_offset;
+        public float    lumi_masking;
+        public float    temporal_cplx_masking;
+        public float    spatial_cplx_masking;
+        public float    p_masking;
+        public float    dark_masking;
+        public int      slice_count;
+        public int*     slice_offset;
+        public AVRational sample_aspect_ratio;
+        public int      me_cmp;
+        public int      me_sub_cmp;
+        public int      mb_cmp;
+        public int      ildct_cmp;
+        public int      dia_size;
+        public int      last_predictor_count;
+        public int      me_pre_cmp;
+        public int      pre_dia_size;
+        public int      me_subpel_quality;
+        public int      me_range;
+        public int      slice_flags;
+        public int      mb_decision;
+        public ushort*  intra_matrix;
+        public ushort*  inter_matrix;
+        public ushort*  chroma_intra_matrix;
+        public int      intra_dc_precision;
+        public int      skip_top;
+        public int      skip_bottom;
+        public int      mb_lmin;
+        public int      mb_lmax;
+        public int      bidir_refine;
+        public int      keyint_min;
+        public int      refs;
+        public int      mv0_threshold;
+        public int      color_primaries;
+        public int      color_trc;
+        public int      colorspace;
+        public int      color_range;
+        public int      chroma_sample_location;
+        public int      slices;
+        // ... remaining fields irrelevant for our use
     }
 
-    // x64 layout (pointer fields at 8-byte-aligned offsets): total 32 bytes
-    [StructLayout(LayoutKind.Explicit, Size = 32)]
-    public struct MFT_OUTPUT_DATA_BUFFER
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct AVRational { public int num, den; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct AVFrame
     {
-        [FieldOffset( 0)] public uint   dwStreamID;
-        [FieldOffset( 8)] public IntPtr pSample;
-        [FieldOffset(16)] public uint   dwStatus;
-        [FieldOffset(24)] public IntPtr pEvents;
+        public fixed byte* data_ptrs[8];   // data[0..7]
+        public fixed int   linesize[8];
+        public byte**      extended_data;
+        public int         width, height;
+        public int         nb_samples;
+        public int         format;
+        public int         key_frame;
+        public int         pict_type;
+        public AVRational  sample_aspect_ratio;
+        public long        pts;
+        public long        pkt_dts;
+        public AVRational  time_base;
+        // ... more fields we don't need
     }
 
-    // ── Helpers ───────────────────────────────────────────────────────────────
-
-    /// <summary>Reads a function pointer from a COM object's vtable at the given slot.</summary>
-    public static T Vtbl<T>(IntPtr obj, int slot) where T : Delegate
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct AVPacket
     {
-        var vt = Marshal.ReadIntPtr(obj);
-        var fn = Marshal.ReadIntPtr(vt, slot * IntPtr.Size);
-        return Marshal.GetDelegateForFunctionPointer<T>(fn);
+        public void*  buf;
+        public long   pts;
+        public long   dts;
+        public byte*  data;
+        public int    size;
+        public int    stream_index;
+        public int    flags;
+        public void*  side_data;
+        public int    side_data_elems;
+        public long   duration;
+        public long   pos;
     }
 
-    public static void Release(ref IntPtr p)
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct AVDictionary { public int count; /* opaque */ }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal unsafe struct AVCodecParameters { /* opaque for our use */ }
+
+    internal unsafe struct SwsContext { /* opaque */ }
+#pragma warning restore CS0649
+
+    // -----------------------------------------------------------------------
+    // Helper to pin a managed byte[] and expose it as byte**  / int*
+    // -----------------------------------------------------------------------
+    internal static unsafe class PinHelper
     {
-        if (p == IntPtr.Zero) return;
-        Vtbl<Fn_Release>(p, 2)(p);   // IUnknown::Release is slot 2
-        p = IntPtr.Zero;
-    }
-
-    // IMFAttributes method shortcuts (vtable slots after IUnknown 0-2):
-    // GetItem=3 … DeleteAllItems=20, SetUINT32=21, SetUINT64=22, SetDouble=23, SetGUID=24
-    public static int SetUINT32(IntPtr attr, Guid key, uint val)
-        => Vtbl<Fn_SetUINT32>(attr, 21)(attr, ref key, val);
-
-    public static int SetUINT64(IntPtr attr, Guid key, ulong val)
-        => Vtbl<Fn_SetUINT64>(attr, 22)(attr, ref key, val);
-
-    public static int SetGUID(IntPtr attr, Guid key, Guid val)
-        => Vtbl<Fn_SetGUID>(attr, 24)(attr, ref key, ref val);
-
-    // IMFAttributes::GetUINT64 = slot 8
-    public static int GetUINT64(IntPtr attr, Guid key, out ulong val)
-        => Vtbl<Fn_GetUINT64>(attr, 8)(attr, ref key, out val);
-
-    // IMFAttributes::GetUINT32 = slot 7
-    public static int GetUINT32(IntPtr attr, Guid key, out uint val)
-        => Vtbl<Fn_GetUINT32>(attr, 7)(attr, ref key, out val);
-
-    /// <summary>Pack (width, height) into UINT64 for MF_MT_FRAME_SIZE.</summary>
-    public static ulong PackWH(uint w, uint h) => ((ulong)w << 32) | h;
-
-    /// <summary>Pack (num, den) into UINT64 for MF_MT_FRAME_RATE.</summary>
-    public static ulong PackFrac(uint n, uint d) => ((ulong)n << 32) | d;
-
-    /// <summary>
-    /// Reads all bytes from the first buffer in an IMFSample.
-    /// IMFSample vtable (inherits IMFAttributes 33 slots):
-    ///   GetTotalLength=45, GetBufferByIndex=40.
-    /// IMFMediaBuffer vtable (inherits IUnknown 3 slots):
-    ///   Lock=3, Unlock=4, GetCurrentLength=5.
-    /// </summary>
-    public static byte[] ReadSampleBytes(IntPtr sample)
-    {
-        Vtbl<Fn_GetTotalLen>(sample, 45)(sample, out var total);
-        if (total == 0) return Array.Empty<byte>();
-
-        Vtbl<Fn_GetBufByIndex>(sample, 40)(sample, 0, out var buf);
-        try
+        public static byte[] BytesFromFrame(AVFrame* f, int planeCount)
         {
-            Vtbl<Fn_GetCurLen>(buf, 5)(buf, out var len);
-            if (len == 0) return Array.Empty<byte>();
-            Vtbl<Fn_Lock>(buf, 3)(buf, out var ptr, IntPtr.Zero, out _);
-            var data = new byte[len];
-            Marshal.Copy(ptr, data, 0, (int)len);
-            Vtbl<Fn_Unlock>(buf, 4)(buf);
-            return data;
+            // Read frame data from plane 0 only (used for packed formats like BGRA)
+            int stride = f->linesize[0];
+            int h      = f->height;
+            byte* src  = f->data_ptrs[0];
+            int   len  = stride * h;
+            var   buf  = new byte[len];
+            Marshal.Copy((IntPtr)src, buf, 0, len);
+            return buf;
         }
-        finally { MfNative.Release(ref buf); }
     }
-}
 
-// ── H264 Encoder ─────────────────────────────────────────────────────────────
-
-/// <summary>
-/// Encodes BGRA frames to H264 Annex B using the Windows inbox software MFT
-/// (CLSID_MSH264EncoderMFT). Thread-hostile — call Encode() from one thread.
-/// </summary>
-public sealed class MfH264Encoder : IDisposable
-{
-    private IntPtr _mft;
-    private readonly int _fps;
-    private long _sampleTime;
-    private bool _streaming;
-
-    /// <summary>
-    /// Fallback: usa MFTEnumEx para encontrar qualquer encoder H264 disponível no sistema.
-    /// Funciona em Windows N/KN (sem Media Feature Pack no CLSID direto) e com drivers
-    /// que não registram CLSID_MSH264EncoderMFT mas têm MFT enumerável.
-    /// </summary>
-    private static IntPtr TryEnumerateEncoder()
+    // =======================================================================
+    // MfH264Encoder – encodes BGRA frames to H264 Annex-B using libx264
+    // (same public API as the old MF-based encoder)
+    // =======================================================================
+    public sealed unsafe class MfH264Encoder : IDisposable
     {
-        var cat = MfNative.MFT_CATEGORY_VIDEO_ENCODER;
-        int hr  = MfNative.MFTEnumEx(ref cat, 0, IntPtr.Zero, IntPtr.Zero,
-                                      out IntPtr ppActivate, out uint count);
-        if (hr < 0 || count == 0 || ppActivate == IntPtr.Zero)
-            return IntPtr.Zero;
+        private AVCodecContext* _ctx;
+        private AVFrame*        _frame;
+        private AVPacket*       _pkt;
+        private SwsContext*     _swsCtx;
+        private int             _width, _height, _fps;
+        private long            _pts;
+        private bool            _disposed;
 
-        var    iid = MfNative.IID_IMFTransform;
-        IntPtr mft = IntPtr.Zero;
-
-        for (uint i = 0; i < count; i++)
+        public MfH264Encoder(int width, int height, int fps = 30, int bitrateBps = 2_500_000)
         {
-            IntPtr act = Marshal.ReadIntPtr(ppActivate, (int)(i * IntPtr.Size));
-            if (act == IntPtr.Zero) continue;
+            _width  = width;
+            _height = height;
+            _fps    = fps > 0 ? fps : 30;
 
-            // IMFActivate::ActivateObject = slot 33 (IUnknown 3 + IMFAttributes 30 = 33)
-            int hrAct = MfNative.Vtbl<MfNative.Fn_ActivateObject>(act, 33)(act, ref iid, out IntPtr obj);
-            MfNative.Release(ref act);
+            // Find libx264 encoder
+            byte* name = stackalloc byte[16];
+            WriteAscii(name, "libx264");
+            AVCodec* codec = Ffmpeg.avcodec_find_encoder_by_name(name);
+            if (codec == null)
+                throw new InvalidOperationException("FFmpeg libx264 encoder not found. Ensure avcodec-61.dll is present.");
 
-            if (hrAct >= 0 && obj != IntPtr.Zero)
+            _ctx = Ffmpeg.avcodec_alloc_context3(codec);
+            if (_ctx == null)
+                throw new InvalidOperationException("Failed to allocate AVCodecContext.");
+
+            _ctx->width      = width;
+            _ctx->height     = height;
+            _ctx->pix_fmt    = Ffmpeg.AV_PIX_FMT_YUV420P;
+            _ctx->bit_rate   = bitrateBps;
+            _ctx->time_base  = new AVRational { num = 1, den = _fps };
+            _ctx->framerate  = new AVRational { num = _fps, den = 1 };
+            _ctx->gop_size   = _fps * 2;   // keyframe every 2 s
+            _ctx->max_b_frames = 0;         // no B-frames for low latency
+
+            // Set x264 options for low latency
+            AVDictionary* opts = null;
+            SetDictEntry(&opts, "preset",   "ultrafast");
+            SetDictEntry(&opts, "tune",     "zerolatency");
+            SetDictEntry(&opts, "profile",  "baseline");
+
+            int ret = Ffmpeg.avcodec_open2(_ctx, codec, &opts);
+            Ffmpeg.av_dict_free(&opts);
+            if (ret < 0)
+                throw new InvalidOperationException($"avcodec_open2 failed: {Ffmpeg.AvErrStr(ret)}");
+
+            // Allocate YUV frame
+            _frame           = Ffmpeg.av_frame_alloc();
+            _frame->format   = Ffmpeg.AV_PIX_FMT_YUV420P;
+            _frame->width    = width;
+            _frame->height   = height;
+            ret = Ffmpeg.av_frame_get_buffer(_frame, 32);
+            if (ret < 0)
+                throw new InvalidOperationException($"av_frame_get_buffer failed: {Ffmpeg.AvErrStr(ret)}");
+
+            _pkt = Ffmpeg.av_packet_alloc();
+
+            // Color-space converter: BGRA → YUV420P
+            _swsCtx = Ffmpeg.sws_getContext(
+                width, height, Ffmpeg.AV_PIX_FMT_BGRA,
+                width, height, Ffmpeg.AV_PIX_FMT_YUV420P,
+                Ffmpeg.SWS_BILINEAR, null, null, null);
+            if (_swsCtx == null)
+                throw new InvalidOperationException("sws_getContext failed.");
+        }
+
+        /// <summary>Encode one BGRA frame; returns Annex-B H264 bytes or null on error.</summary>
+        public byte[]? Encode(byte[] bgra, int width, int height)
+        {
+            if (_disposed) return null;
+            if (bgra == null || bgra.Length == 0) return null;
+
+            // Resize colorspace converter if resolution changed
+            if (width != _width || height != _height)
             {
-                mft = obj;
-                // Libera activates restantes
-                for (uint j = i + 1; j < count; j++)
-                {
-                    IntPtr a = Marshal.ReadIntPtr(ppActivate, (int)(j * IntPtr.Size));
-                    if (a != IntPtr.Zero) MfNative.Release(ref a);
-                }
-                break;
-            }
-        }
-
-        MfNative.CoTaskMemFree(ppActivate);
-        return mft;
-    }
-
-    public MfH264Encoder(int width, int height, int fps = 30, int bitrateBps = 2_500_000)
-    {
-        _fps = fps;
-        MfNative.MFStartup(MfNative.MF_VERSION);
-
-        var clsid    = MfNative.CLSID_MSH264EncoderMFT;
-        var iid      = MfNative.IID_IMFTransform;
-        int hrCreate = MfNative.CoCreateInstance(ref clsid, IntPtr.Zero,
-                        MfNative.CLSCTX_INPROC_SERVER, ref iid, out _mft);
-        if (hrCreate < 0)
-        {
-            // CLSID direto falhou — tenta enumerar encoders disponíveis (MFTEnumEx)
-            _mft = TryEnumerateEncoder();
-            if (_mft == IntPtr.Zero)
-                Throw(hrCreate, "CoCreateInstance encoder");
-        }
-
-        // Output type (H264) must be configured before input type
-        MfNative.MFCreateMediaType(out var ot);
-        try
-        {
-            MfNative.SetGUID  (ot, MfNative.MF_MT_MAJOR_TYPE,     MfNative.MFMediaType_Video);
-            MfNative.SetGUID  (ot, MfNative.MF_MT_SUBTYPE,        MfNative.MFVideoFormat_H264);
-            MfNative.SetUINT32(ot, MfNative.MF_MT_AVG_BITRATE,    (uint)bitrateBps);
-            MfNative.SetUINT32(ot, MfNative.MF_MT_INTERLACE_MODE, 2);   // progressive
-            MfNative.SetUINT64(ot, MfNative.MF_MT_FRAME_SIZE,
-                                   MfNative.PackWH((uint)width, (uint)height));
-            MfNative.SetUINT64(ot, MfNative.MF_MT_FRAME_RATE,
-                                   MfNative.PackFrac((uint)fps, 1));
-            // IMFTransform: SetOutputType = slot 16
-            Throw(MfNative.Vtbl<MfNative.Fn_SetOutputType>(_mft, 16)(_mft, 0, ot, 0),
-                  "SetOutputType H264");
-        }
-        finally { MfNative.Release(ref ot); }
-
-        // Input type (NV12)
-        MfNative.MFCreateMediaType(out var it);
-        try
-        {
-            MfNative.SetGUID  (it, MfNative.MF_MT_MAJOR_TYPE,     MfNative.MFMediaType_Video);
-            MfNative.SetGUID  (it, MfNative.MF_MT_SUBTYPE,        MfNative.MFVideoFormat_NV12);
-            MfNative.SetUINT32(it, MfNative.MF_MT_INTERLACE_MODE, 2);
-            MfNative.SetUINT64(it, MfNative.MF_MT_FRAME_SIZE,
-                                   MfNative.PackWH((uint)width, (uint)height));
-            MfNative.SetUINT64(it, MfNative.MF_MT_FRAME_RATE,
-                                   MfNative.PackFrac((uint)fps, 1));
-            // IMFTransform: SetInputType = slot 15
-            Throw(MfNative.Vtbl<MfNative.Fn_SetInputType>(_mft, 15)(_mft, 0, it, 0),
-                  "SetInputType NV12");
-        }
-        finally { MfNative.Release(ref it); }
-    }
-
-    /// <summary>Encode one BGRA frame. Returns H264 Annex B bytes or null if the encoder
-    /// needs more input frames before producing output (B-frames / GOP start).</summary>
-    public byte[]? Encode(byte[] bgra, int width, int height)
-    {
-        if (_mft == IntPtr.Zero) return null;
-
-        // Start streaming once before first input
-        if (!_streaming)
-        {
-            _streaming = true;
-            var pm = MfNative.Vtbl<MfNative.Fn_ProcessMessage>(_mft, 23);
-            pm(_mft, MfNative.MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, UIntPtr.Zero);
-            pm(_mft, MfNative.MFT_MESSAGE_NOTIFY_START_OF_STREAM, UIntPtr.Zero);
-        }
-
-        var  nv12    = BgraToNv12(bgra, width, height);
-        uint nv12Len = (uint)nv12.Length;
-
-        MfNative.MFCreateMemoryBuffer(nv12Len, out var buf);
-        MfNative.MFCreateSample(out var sample);
-        try
-        {
-            // Fill the buffer with NV12 data
-            MfNative.Vtbl<MfNative.Fn_Lock>   (buf, 3)(buf, out var ptr, IntPtr.Zero, out _);
-            Marshal.Copy(nv12, 0, ptr, (int)nv12Len);
-            MfNative.Vtbl<MfNative.Fn_Unlock> (buf, 4)(buf);
-            MfNative.Vtbl<MfNative.Fn_SetCurLen>(buf, 6)(buf, nv12Len);
-
-            // Attach buffer to sample and set timestamps
-            // IMFSample: AddBuffer=42, SetSampleTime=36, SetSampleDuration=38
-            MfNative.Vtbl<MfNative.Fn_AddBuffer>   (sample, 42)(sample, buf);
-            long dur = 10_000_000L / _fps;
-            MfNative.Vtbl<MfNative.Fn_SetSampleTime>(sample, 36)(sample, _sampleTime);
-            MfNative.Vtbl<MfNative.Fn_SetSampleDur> (sample, 38)(sample, dur);
-            _sampleTime += dur;
-
-            // IMFTransform: ProcessInput = slot 24
-            int hr = MfNative.Vtbl<MfNative.Fn_ProcessInput>(_mft, 24)(_mft, 0, sample, 0);
-            if (hr < 0) return null;
-
-            return DrainOutput();
-        }
-        finally
-        {
-            MfNative.Release(ref sample);
-            MfNative.Release(ref buf);
-        }
-    }
-
-    private byte[]? DrainOutput()
-    {
-        // IMFTransform: GetOutputStreamInfo = slot 7
-        MfNative.Vtbl<MfNative.Fn_GetOutputStreamInfo>(_mft, 7)(_mft, 0, out var si);
-        bool mftOwns = (si.dwFlags & MfNative.MFT_OUTPUT_STREAM_PROVIDES_SAMPLES) != 0;
-
-        IntPtr outBuf    = IntPtr.Zero;
-        IntPtr outSample = IntPtr.Zero;
-        try
-        {
-            if (!mftOwns)
-            {
-                uint sz = si.cbSize > 0 ? si.cbSize : 1_048_576u;
-                MfNative.MFCreateMemoryBuffer(sz, out outBuf);
-                MfNative.MFCreateSample(out outSample);
-                MfNative.Vtbl<MfNative.Fn_AddBuffer>(outSample, 42)(outSample, outBuf);
+                Ffmpeg.sws_freeContext(_swsCtx);
+                _width  = width;
+                _height = height;
+                _ctx->width  = width;
+                _ctx->height = height;
+                _frame->width  = width;
+                _frame->height = height;
+                _swsCtx = Ffmpeg.sws_getContext(
+                    width, height, Ffmpeg.AV_PIX_FMT_BGRA,
+                    width, height, Ffmpeg.AV_PIX_FMT_YUV420P,
+                    Ffmpeg.SWS_BILINEAR, null, null, null);
             }
 
-            var db = new MfNative.MFT_OUTPUT_DATA_BUFFER
+            int ret = Ffmpeg.av_frame_make_writable(_frame);
+            if (ret < 0) return null;
+
+            fixed (byte* src = bgra)
             {
-                dwStreamID = 0,
-                pSample    = outSample   // IntPtr.Zero when mftOwns
-            };
+                byte*  srcPtrs0  = src;
+                byte** srcSlice  = &srcPtrs0;
+                int    srcStride = width * 4; // BGRA stride
+                int*   srcSt     = &srcStride;
 
-            // IMFTransform: ProcessOutput = slot 25
-            int hr = MfNative.Vtbl<MfNative.Fn_ProcessOutput>(_mft, 25)
-                              (_mft, 0, 1, ref db, out _);
+                byte** dstData    = (byte**)_frame->data_ptrs[0]; // trick – use via sws
+                // sws_scale with frame planes
+                byte*  dP0 = _frame->data_ptrs[0];
+                byte*  dP1 = _frame->data_ptrs[1];
+                byte*  dP2 = _frame->data_ptrs[2];
+                byte** dPlanes = stackalloc byte*[4];
+                dPlanes[0] = dP0; dPlanes[1] = dP1; dPlanes[2] = dP2; dPlanes[3] = null;
 
-            if (hr == MfNative.MF_E_TRANSFORM_NEED_MORE_INPUT) return null;
-            if (hr < 0) return null;
+                int ls0 = _frame->linesize[0];
+                int ls1 = _frame->linesize[1];
+                int ls2 = _frame->linesize[2];
+                int ls3 = 0;
+                int* dStrides = stackalloc int[4];
+                dStrides[0] = ls0; dStrides[1] = ls1; dStrides[2] = ls2; dStrides[3] = ls3;
 
-            IntPtr smp = mftOwns ? db.pSample : outSample;
-            if (smp == IntPtr.Zero) return null;
-
-            var data = MfNative.ReadSampleBytes(smp);
-            if (mftOwns && db.pSample != IntPtr.Zero)
-                MfNative.Release(ref db.pSample);
-
-            return data.Length > 0 ? data : null;
-        }
-        finally
-        {
-            if (!mftOwns)
-            {
-                MfNative.Release(ref outSample);
-                MfNative.Release(ref outBuf);
-            }
-        }
-    }
-
-    /// <summary>BGRA → NV12 (planar Y then interleaved UV), BT.601 integer math.</summary>
-    private static byte[] BgraToNv12(byte[] bgra, int w, int h)
-    {
-        var  nv12  = new byte[w * h * 3 / 2];
-        int  uvOff = w * h;
-
-        for (int y = 0; y < h; y++)
-        {
-            for (int x = 0; x < w; x++)
-            {
-                int si = (y * w + x) * 4;
-                int b  = bgra[si], g = bgra[si + 1], r = bgra[si + 2];
-
-                // Y plane
-                nv12[y * w + x] = (byte)(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16);
-
-                // UV plane — one sample per 2×2 block
-                if ((y & 1) == 0 && (x & 1) == 0)
-                {
-                    int ui = uvOff + (y / 2) * w + x;
-                    nv12[ui]     = (byte)(((-38 * r -  74 * g + 112 * b + 128) >> 8) + 128); // Cb
-                    nv12[ui + 1] = (byte)((( 112 * r - 94 * g -  18 * b + 128) >> 8) + 128); // Cr
-                }
-            }
-        }
-        return nv12;
-    }
-
-    public void Dispose() => MfNative.Release(ref _mft);
-
-    private static void Throw(int hr, string ctx)
-    {
-        if (hr < 0) throw new InvalidOperationException($"{ctx} failed: 0x{(uint)hr:X8}");
-    }
-}
-
-// ── H264 Decoder ─────────────────────────────────────────────────────────────
-
-/// <summary>
-/// Decodes H264 Annex B frames to BGRA using the Windows inbox software MFT
-/// (CLSID_CMSH264DecoderMFT). Thread-hostile — call Decode() from one thread.
-///
-/// Resolution is auto-detected from the H264 SPS NAL unit — no need to provide
-/// width/height upfront. On first keyframe the MFT fires MF_E_TRANSFORM_STREAM_CHANGE
-/// which we handle to learn the actual decoded dimensions and stride.
-/// </summary>
-public sealed class MfH264Decoder : IDisposable
-{
-    private IntPtr _mft;
-    private int    _width, _height;
-    /// <summary>
-    /// Stride real em bytes do plano Y (NV12). Pode ser maior que _width quando o MFT
-    /// alinha a stride a 16 bytes para SIMD. Exemplo: 1366 → stride=1376 (múltiplo de 16).
-    /// Obtido de MF_MT_DEFAULT_STRIDE no tipo de saída proposto pelo MFT após STREAM_CHANGE.
-    /// </summary>
-    private int    _stride;
-    private long   _sampleTime;
-    private bool   _streaming;
-    private bool   _outputTypeSet;
-
-    private static readonly string LogPath =
-        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "jaclipei_error.txt");
-
-    public MfH264Decoder()
-    {
-        MfNative.MFStartup(MfNative.MF_VERSION);
-        var clsid = MfNative.CLSID_CMSH264DecoderMFT;
-        var iid   = MfNative.IID_IMFTransform;
-        int hr    = MfNative.CoCreateInstance(ref clsid, IntPtr.Zero,
-                        MfNative.CLSCTX_INPROC_SERVER, ref iid, out _mft);
-        if (hr < 0)
-            throw new InvalidOperationException($"CoCreateInstance decoder failed: 0x{(uint)hr:X8}");
-    }
-
-    /// <summary>
-    /// Sets up the H264 input type. Resolution is NOT specified — the MFT reads it
-    /// from the bitstream SPS. Output type is configured later via HandleStreamChange().
-    /// </summary>
-    private void Initialize()
-    {
-        // Input type: H264 — major type + subtype only; let MFT read resolution from SPS
-        MfNative.MFCreateMediaType(out var it);
-        try
-        {
-            MfNative.SetGUID(it, MfNative.MF_MT_MAJOR_TYPE, MfNative.MFMediaType_Video);
-            MfNative.SetGUID(it, MfNative.MF_MT_SUBTYPE,    MfNative.MFVideoFormat_H264);
-            // Deliberately NOT setting MF_MT_FRAME_SIZE — decoder reads it from SPS NAL
-            int hr = MfNative.Vtbl<MfNative.Fn_SetInputType>(_mft, 15)(_mft, 0, it, 0);
-            if (hr < 0)
-                throw new InvalidOperationException($"Decoder SetInputType H264: 0x{(uint)hr:X8}");
-        }
-        finally { MfNative.Release(ref it); }
-
-        var pm = MfNative.Vtbl<MfNative.Fn_ProcessMessage>(_mft, 23);
-        pm(_mft, MfNative.MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, UIntPtr.Zero);
-        pm(_mft, MfNative.MFT_MESSAGE_NOTIFY_START_OF_STREAM, UIntPtr.Zero);
-        _streaming     = true;
-        _outputTypeSet = false;
-    }
-
-    /// <summary>
-    /// Called after MF_E_TRANSFORM_STREAM_CHANGE — queries the MFT for the actual
-    /// output format (width x height x stride) and sets the NV12 output type.
-    ///
-    /// IMFTransform::GetOutputCurrentType = slot 18
-    /// IMFAttributes::GetUINT64           = slot 8  (frame size)
-    /// IMFAttributes::GetUINT32           = slot 7  (stride — may be signed int stored as UINT32)
-    /// </summary>
-    private void HandleStreamChange()
-    {
-        // Query what the MFT proposes as output format (filled by SPS parsing)
-        int hr = MfNative.Vtbl<MfNative.Fn_GetCurrentType>(_mft, 18)(_mft, 0, out IntPtr mt);
-        if (hr >= 0 && mt != IntPtr.Zero)
-        {
-            try
-            {
-                // Frame size
-                hr = MfNative.GetUINT64(mt, MfNative.MF_MT_FRAME_SIZE, out ulong wh);
-                if (hr >= 0 && wh != 0)
-                {
-                    _width  = (int)(wh >> 32);
-                    _height = (int)(wh & 0xFFFF_FFFFUL);
-                }
-
-                // Stride — MFT aligns to 16 bytes for SIMD; may be > _width
-                hr = MfNative.GetUINT32(mt, MfNative.MF_MT_DEFAULT_STRIDE, out uint strideRaw);
-                if (hr >= 0 && strideRaw > 0)
-                    _stride = (int)strideRaw;
-            }
-            finally { MfNative.Release(ref mt); }
-        }
-
-        // Fallback: derive size
-        if (_width  <= 0) _width  = 1920;
-        if (_height <= 0) _height = 1080;
-        // Fallback stride: align width to 16-byte boundary (matches CMSH264DecoderMFT behavior)
-        if (_stride <= 0) _stride = (_width + 15) & ~15;
-
-        System.IO.File.AppendAllText(LogPath,
-            $"[Decoder/StreamChange] {DateTime.Now}: {_width}x{_height} stride={_stride}\n");
-
-        // Configure the output type: NV12 at the actual decoded resolution
-        MfNative.MFCreateMediaType(out var ot);
-        try
-        {
-            MfNative.SetGUID  (ot, MfNative.MF_MT_MAJOR_TYPE, MfNative.MFMediaType_Video);
-            MfNative.SetGUID  (ot, MfNative.MF_MT_SUBTYPE,    MfNative.MFVideoFormat_NV12);
-            MfNative.SetUINT64(ot, MfNative.MF_MT_FRAME_SIZE, MfNative.PackWH((uint)_width, (uint)_height));
-            hr = MfNative.Vtbl<MfNative.Fn_SetOutputType>(_mft, 16)(_mft, 0, ot, 0);
-            if (hr >= 0)
-                _outputTypeSet = true;
-            else
-                System.IO.File.AppendAllText(LogPath,
-                    $"[Decoder/StreamChange] {DateTime.Now}: SetOutputType hr=0x{(uint)hr:X8}\n");
-        }
-        finally { MfNative.Release(ref ot); }
-    }
-
-    /// <summary>
-    /// Decode one H264 Annex B frame. Returns (null,0,0) when the decoder needs
-    /// more input (e.g. waiting for IDR / B-frame reorder) or is still initialising.
-    /// Width/height are ignored — resolution is auto-detected from the bitstream.
-    /// </summary>
-    public (byte[]? bgra, int width, int height) Decode(byte[] h264, int width = 0, int height = 0)
-    {
-        if (_mft == IntPtr.Zero) return (null, 0, 0);
-
-        if (!_streaming) Initialize();
-
-        uint h264Len = (uint)h264.Length;
-        MfNative.MFCreateMemoryBuffer(h264Len, out var buf);
-        MfNative.MFCreateSample(out var sample);
-        try
-        {
-            MfNative.Vtbl<MfNative.Fn_Lock>     (buf, 3)(buf, out var ptr, IntPtr.Zero, out _);
-            Marshal.Copy(h264, 0, ptr, (int)h264Len);
-            MfNative.Vtbl<MfNative.Fn_Unlock>   (buf, 4)(buf);
-            MfNative.Vtbl<MfNative.Fn_SetCurLen>(buf, 6)(buf, h264Len);
-
-            MfNative.Vtbl<MfNative.Fn_AddBuffer>   (sample, 42)(sample, buf);
-            long dur = 10_000_000L / 30;
-            MfNative.Vtbl<MfNative.Fn_SetSampleTime>(sample, 36)(sample, _sampleTime);
-            MfNative.Vtbl<MfNative.Fn_SetSampleDur> (sample, 38)(sample, dur);
-            _sampleTime += dur;
-
-            // IMFTransform::ProcessInput — HRESULT now logged (previously silently ignored)
-            int hrPi = MfNative.Vtbl<MfNative.Fn_ProcessInput>(_mft, 24)(_mft, 0, sample, 0);
-            if (hrPi < 0)
-            {
-                System.IO.File.AppendAllText(LogPath,
-                    $"[Decoder/ProcessInput] {DateTime.Now}: hr=0x{(uint)hrPi:X8} ({h264Len}B)\n");
-                return (null, 0, 0);
-            }
-        }
-        finally { MfNative.Release(ref sample); MfNative.Release(ref buf); }
-
-        var nv12 = DrainDecoder();
-        if (nv12 == null || nv12.Length == 0) return (null, 0, 0);
-        if (_width <= 0 || _height <= 0)      return (null, 0, 0);
-
-        return (Nv12ToBgra(nv12, _width, _height, _stride), _width, _height);
-    }
-
-    private byte[]? DrainDecoder()
-    {
-        // CMSH264DecoderMFT provides its own samples (MFT_OUTPUT_STREAM_PROVIDES_SAMPLES).
-        // Always pass pSample = IntPtr.Zero; the MFT fills db.pSample on success.
-        // On MF_E_TRANSFORM_STREAM_CHANGE the output format changed — query it and retry.
-        // Up to 3 attempts: first call may return STREAM_CHANGE, second sets output type,
-        // third delivers the actual decoded frame.
-
-        for (int attempt = 0; attempt < 3; attempt++)
-        {
-            var db = new MfNative.MFT_OUTPUT_DATA_BUFFER
-            {
-                dwStreamID = 0,
-                pSample    = IntPtr.Zero
-            };
-
-            int hr = MfNative.Vtbl<MfNative.Fn_ProcessOutput>(_mft, 25)
-                              (_mft, 0, 1, ref db, out _);
-
-            // Release any event object the MFT may have returned
-            if (db.pEvents != IntPtr.Zero)
-            {
-                var ev = db.pEvents;
-                MfNative.Release(ref ev);
+                Ffmpeg.sws_scale(_swsCtx, srcSlice, srcSt, 0, height, dPlanes, dStrides);
             }
 
-            if (hr == MfNative.MF_E_TRANSFORM_NEED_MORE_INPUT)
-                return null;
+            _frame->pts = _pts++;
 
-            if (hr == MfNative.MF_E_TRANSFORM_STREAM_CHANGE)
-            {
-                // Output format changed (first SPS decoded, or resolution change).
-                // Query actual output type and configure NV12 output, then retry.
-                HandleStreamChange();
-                continue;
-            }
+            ret = Ffmpeg.avcodec_send_frame(_ctx, _frame);
+            if (ret < 0) return null;
 
-            if (hr < 0)
-            {
-                System.IO.File.AppendAllText(LogPath,
-                    $"[Decoder/ProcessOutput] {DateTime.Now}: hr=0x{(uint)hr:X8} w={_width} h={_height} stride={_stride}\n");
-                return null;
-            }
+            ret = Ffmpeg.avcodec_receive_packet(_ctx, _pkt);
+            if (ret < 0) { Ffmpeg.av_packet_unref(_pkt); return null; }
 
-            // Success — read bytes from MFT-owned sample
-            IntPtr smp = db.pSample;
-            if (smp == IntPtr.Zero) return null;
-
-            var data = MfNative.ReadSampleBytes(smp);
-            MfNative.Release(ref smp);
-            return data.Length > 0 ? data : null;
+            byte[] output = new byte[_pkt->size];
+            Marshal.Copy((IntPtr)_pkt->data, output, 0, _pkt->size);
+            Ffmpeg.av_packet_unref(_pkt);
+            return output;
         }
 
-        return null;
-    }
-
-    /// <summary>
-    /// NV12 → BGRA, BT.601 integer math.
-    ///
-    /// IMPORTANT: <paramref name="stride"/> is the actual row stride of the NV12 buffer,
-    /// which may be larger than <paramref name="w"/> when the MFT aligns rows to 16 bytes.
-    /// Using w as stride on a non-aligned resolution produces garbled video.
-    ///
-    /// NV12 memory layout:
-    ///   Y  plane: stride * height bytes  (one byte per pixel)
-    ///   UV plane: stride * height/2 bytes (interleaved Cb/Cr, one pair per 2×2 block)
-    /// </summary>
-    private static byte[] Nv12ToBgra(byte[] nv12, int w, int h, int stride)
-    {
-        var bgra  = new byte[w * h * 4];
-        // UV plane starts at stride * height (not w * h when stride > w)
-        int uvOff = stride * h;
-
-        for (int y = 0; y < h; y++)
+        public void Dispose()
         {
-            int uvRow = (y / 2) * stride;
-            for (int x = 0; x < w; x++)
-            {
-                int yVal = nv12[y * stride + x]              - 16;
-                int cb   = nv12[uvOff + uvRow + (x & ~1)]      - 128;
-                int cr   = nv12[uvOff + uvRow + (x & ~1) + 1]  - 128;
+            if (_disposed) return;
+            _disposed = true;
 
-                int r = (298 * yVal + 409 * cr           + 128) >> 8;
-                int g = (298 * yVal - 100 * cb - 208 * cr + 128) >> 8;
-                int b = (298 * yVal + 516 * cb           + 128) >> 8;
-
-                int di = (y * w + x) * 4;
-                bgra[di]     = (byte)Math.Clamp(b, 0, 255);
-                bgra[di + 1] = (byte)Math.Clamp(g, 0, 255);
-                bgra[di + 2] = (byte)Math.Clamp(r, 0, 255);
-                bgra[di + 3] = 255;
-            }
+            if (_swsCtx != null) { Ffmpeg.sws_freeContext(_swsCtx); _swsCtx = null; }
+            if (_pkt    != null) { fixed (AVPacket** p = &_pkt) Ffmpeg.av_packet_free(p); _pkt = null; }
+            if (_frame  != null) { fixed (AVFrame**  f = &_frame) Ffmpeg.av_frame_free(f); _frame = null; }
+            if (_ctx    != null) { fixed (AVCodecContext** c = &_ctx) Ffmpeg.avcodec_free_context(c); _ctx = null; }
         }
-        return bgra;
+
+        // ---- helpers -------------------------------------------------------
+        private static void WriteAscii(byte* buf, string s)
+        {
+            for (int i = 0; i < s.Length; i++) buf[i] = (byte)s[i];
+            buf[s.Length] = 0;
+        }
+
+        private static void SetDictEntry(AVDictionary** dict, string key, string value)
+        {
+            byte* k = stackalloc byte[64];
+            byte* v = stackalloc byte[64];
+            WriteAscii(k, key);
+            WriteAscii(v, value);
+            Ffmpeg.av_dict_set(dict, k, v, 0);
+        }
     }
 
-    public void Dispose() => MfNative.Release(ref _mft);
+    // =======================================================================
+    // MfH264Decoder – decodes H264 Annex-B to BGRA using FFmpeg libavcodec
+    // (same public API as the old MF-based decoder)
+    // =======================================================================
+    public sealed unsafe class MfH264Decoder : IDisposable
+    {
+        private AVCodecContext* _ctx;
+        private AVFrame*        _frame;
+        private AVPacket*       _pkt;
+        private SwsContext*     _swsCtx;
+        private int             _swsW, _swsH;
+        private bool            _disposed;
+
+        public MfH264Decoder()
+        {
+            AVCodec* codec = Ffmpeg.avcodec_find_decoder(Ffmpeg.AV_CODEC_ID_H264);
+            if (codec == null)
+                throw new InvalidOperationException("FFmpeg H264 decoder not found. Ensure avcodec-61.dll is present.");
+
+            _ctx = Ffmpeg.avcodec_alloc_context3(codec);
+            if (_ctx == null)
+                throw new InvalidOperationException("Failed to allocate AVCodecContext.");
+
+            int ret = Ffmpeg.avcodec_open2(_ctx, codec, null);
+            if (ret < 0)
+                throw new InvalidOperationException($"avcodec_open2 failed: {Ffmpeg.AvErrStr(ret)}");
+
+            _frame = Ffmpeg.av_frame_alloc();
+            _pkt   = Ffmpeg.av_packet_alloc();
+        }
+
+        /// <summary>Decode H264 Annex-B; returns (BGRA bytes, width, height) or (null,0,0).</summary>
+        public (byte[]? bgra, int width, int height) Decode(byte[] h264, int width = 0, int height = 0)
+        {
+            if (_disposed || h264 == null || h264.Length == 0) return (null, 0, 0);
+
+            fixed (byte* data = h264)
+            {
+                _pkt->data = data;
+                _pkt->size = h264.Length;
+
+                int ret = Ffmpeg.avcodec_send_packet(_ctx, _pkt);
+                if (ret < 0) return (null, 0, 0);
+            }
+
+            int recvRet = Ffmpeg.avcodec_receive_frame(_ctx, _frame);
+            if (recvRet < 0) return (null, 0, 0);
+
+            int w = _frame->width;
+            int h = _frame->height;
+            if (w <= 0 || h <= 0) return (null, 0, 0);
+
+            int srcFmt = _frame->format; // usually AV_PIX_FMT_YUV420P
+
+            // (Re)create swscale context when resolution or format changes
+            if (_swsCtx == null || _swsW != w || _swsH != h)
+            {
+                if (_swsCtx != null) Ffmpeg.sws_freeContext(_swsCtx);
+                _swsW = w; _swsH = h;
+                _swsCtx = Ffmpeg.sws_getContext(
+                    w, h, srcFmt,
+                    w, h, Ffmpeg.AV_PIX_FMT_BGRA,
+                    Ffmpeg.SWS_BILINEAR, null, null, null);
+            }
+
+            byte[] bgra = new byte[w * h * 4];
+            fixed (byte* dst = bgra)
+            {
+                byte*  dstPtr    = dst;
+                byte** dstSlice  = &dstPtr;
+                int    dstStride = w * 4;
+                int*   dstSt     = &dstStride;
+
+                byte*  sP0 = _frame->data_ptrs[0];
+                byte*  sP1 = _frame->data_ptrs[1];
+                byte*  sP2 = _frame->data_ptrs[2];
+                byte** srcPlanes = stackalloc byte*[4];
+                srcPlanes[0] = sP0; srcPlanes[1] = sP1; srcPlanes[2] = sP2; srcPlanes[3] = null;
+
+                int ls0 = _frame->linesize[0];
+                int ls1 = _frame->linesize[1];
+                int ls2 = _frame->linesize[2];
+                int* srcSt = stackalloc int[4];
+                srcSt[0] = ls0; srcSt[1] = ls1; srcSt[2] = ls2; srcSt[3] = 0;
+
+                Ffmpeg.sws_scale(_swsCtx, srcPlanes, srcSt, 0, h, dstSlice, dstSt);
+            }
+
+            Ffmpeg.av_frame_unref(_frame);
+            return (bgra, w, h);
+        }
+
+        public void Dispose()
+        {
+            if (_disposed) return;
+            _disposed = true;
+
+            if (_swsCtx != null) { Ffmpeg.sws_freeContext(_swsCtx); _swsCtx = null; }
+            if (_pkt    != null) { fixed (AVPacket** p = &_pkt) Ffmpeg.av_packet_free(p); _pkt = null; }
+            if (_frame  != null) { fixed (AVFrame**  f = &_frame) Ffmpeg.av_frame_free(f); _frame = null; }
+            if (_ctx    != null) { fixed (AVCodecContext** c = &_ctx) Ffmpeg.avcodec_free_context(c); _ctx = null; }
+        }
+    }
 }
