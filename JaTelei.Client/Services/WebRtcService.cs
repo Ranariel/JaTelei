@@ -49,8 +49,10 @@ public class WebRtcService : IAsyncDisposable
         }
     };
 
-    public event Action<byte[], int, int>? FrameReceived;
-    public event Action<string>?           IceCandidateReady;
+    public event Action<byte[], int, int>?         FrameReceived;
+    public event Action<string>?                   IceCandidateReady;
+    /// <summary>Fired when the ICE connection state changes. Arg: human-readable state string.</summary>
+    public event Action<string>?                   IceStateChanged;
 
     public bool IsConnected =>
         _pc?.iceConnectionState == RTCIceConnectionState.connected;
@@ -82,7 +84,10 @@ public class WebRtcService : IAsyncDisposable
             IceCandidateReady?.Invoke(json);
         };
         _pc.oniceconnectionstatechange += state =>
+        {
             File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: iceState={state}\n");
+            IceStateChanged?.Invoke(state.ToString());
+        };
         _pc.onconnectionstatechange += state =>
             File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: connState={state}\n");
 
@@ -116,7 +121,10 @@ public class WebRtcService : IAsyncDisposable
         {
             try
             {
-                var (bgra, w, h) = _decoder.Decode(frame);
+                // Garante formato Annex B (start code 0x00 0x00 0x00 0x01)
+                // SIPSorcery pode entregar NAL units com ou sem start code
+                var h264 = EnsureAnnexB(frame);
+                var (bgra, w, h) = _decoder.Decode(h264);
                 if (bgra != null)
                     FrameReceived?.Invoke(bgra, w, h);
             }
@@ -139,7 +147,10 @@ public class WebRtcService : IAsyncDisposable
             IceCandidateReady?.Invoke(json);
         };
         _pc.oniceconnectionstatechange += state =>
+        {
             File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: iceState={state}\n");
+            IceStateChanged?.Invoke(state.ToString());
+        };
         _pc.onconnectionstatechange += state =>
             File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: connState={state}\n");
 
@@ -211,6 +222,30 @@ public class WebRtcService : IAsyncDisposable
         }
     }
 
+    // ── Annex B ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Garante que o buffer H264 começa com start code Annex B.
+    /// SIPSorcery 6.x às vezes entrega NAL units com start code (0x00 0x00 0x00 0x01)
+    /// e às vezes sem. O decoder Windows MFT exige Annex B.
+    /// </summary>
+    private static byte[] EnsureAnnexB(byte[] data)
+    {
+        if (data.Length >= 4 &&
+            data[0] == 0 && data[1] == 0 && data[2] == 0 && data[3] == 1)
+            return data; // já tem start code de 4 bytes
+
+        if (data.Length >= 3 &&
+            data[0] == 0 && data[1] == 0 && data[2] == 1)
+            return data; // já tem start code de 3 bytes
+
+        // Prepend start code de 4 bytes
+        var result = new byte[4 + data.Length];
+        result[3] = 1; // 0x00 0x00 0x00 0x01
+        Buffer.BlockCopy(data, 0, result, 4, data.Length);
+        return result;
+    }
+
     // ── Captura full-GPU (monitor inteiro via DLL C++) ────────────────────────
 
     public void StartCapture(int fps = 30, ShareTarget? target = null)
@@ -235,18 +270,35 @@ public class WebRtcService : IAsyncDisposable
 
             if (useNativeDll)
             {
-                int dstH = targetHeight > 0 ? targetHeight : 0;
-                int dstW = 0; // mantém proporção
-                dllReady = ScreenCaptureService.Initialize(
-                    dstWidth:    dstW,
-                    dstHeight:   dstH,
-                    fps:         effectiveFps,
-                    bitrateKbps: bitrateKbps);
+                try
+                {
+                    int dstH = targetHeight > 0 ? targetHeight : 0;
+                    int dstW = 0; // mantém proporção
+                    dllReady = ScreenCaptureService.Initialize(
+                        dstWidth:    dstW,
+                        dstHeight:   dstH,
+                        fps:         effectiveFps,
+                        bitrateKbps: bitrateKbps);
+
+                    if (!dllReady)
+                        File.AppendAllText(LogPath,
+                            $"[Capture] {DateTime.Now}: ScreenCaptureService.Initialize() retornou false (DXGI/DLL falhou)\n");
+                    else
+                        File.AppendAllText(LogPath,
+                            $"[Capture] {DateTime.Now}: DLL inicializada OK ({ScreenCaptureService.OutputWidth}x{ScreenCaptureService.OutputHeight})\n");
+                }
+                catch (Exception ex)
+                {
+                    File.AppendAllText(LogPath,
+                        $"[Capture] {DateTime.Now}: Initialize exception: {ex.GetType().Name}: {ex.Message}\n");
+                    // dllReady permanece false — nenhum frame será enviado pelo path nativo
+                }
             }
 
             // Encoder C# — usado apenas para janela/região (não monitor inteiro)
             MfH264Encoder? fallbackEncoder = null;
             int encW = 0, encH = 0;
+            int framesSent = 0;
 
             try
             {
@@ -293,11 +345,27 @@ public class WebRtcService : IAsyncDisposable
 
                         if (h264?.Length > 0)
                         {
-                            try { _pc?.SendVideo(rtpDuration, h264); }
-                            catch { }
+                            try
+                            {
+                                _pc?.SendVideo(rtpDuration, h264);
+                                framesSent++;
+                                // Loga o primeiro frame enviado
+                                if (framesSent == 1)
+                                    File.AppendAllText(LogPath,
+                                        $"[Capture] {DateTime.Now}: primeiro frame H264 enviado ({h264.Length} bytes)\n");
+                            }
+                            catch (Exception ex)
+                            {
+                                File.AppendAllText(LogPath,
+                                    $"[Capture/Send] {DateTime.Now}: SendVideo falhou: {ex.GetType().Name}: {ex.Message}\n");
+                            }
                         }
                     }
-                    catch { }
+                    catch (Exception ex)
+                    {
+                        File.AppendAllText(LogPath,
+                            $"[Capture/Loop] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
+                    }
 
                     var wait = delay - (DateTime.UtcNow - t0);
                     if (wait > TimeSpan.Zero)
