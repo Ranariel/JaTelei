@@ -37,7 +37,7 @@
                             <SolidColorBrush Color="#3B82F6"/>
                         </Ellipse.Fill>
                     </Ellipse>
-                    <TextBlock Text="Ja Telei"
+                    <TextBlock Text="Já Telei Beta"
                                FontSize="22"
                                FontWeight="Bold"
                                Foreground="#F0F0F0"
@@ -50,16 +50,16 @@
                 </StackPanel>
 
                 <!-- Apelido — sempre visível -->
-                <TextBox Margin="0,0,0,10"
+                <TextBox x:Name="TxtUsername"
+                         Margin="0,0,0,10"
                          Tag="Apelido (ex: gamer123)"
                          Text="{Binding Username, UpdateSourceTrigger=PropertyChanged}"/>
 
-                <!-- Email — apenas no modo registro (opcional) -->
+                <!-- Email — apenas no modo registro -->
                 <StackPanel Visibility="{Binding IsRegisterMode, Converter={StaticResource BoolToVis}}">
                     <TextBox Margin="0,0,0,4"
                              Tag="Email (opcional)"
                              Text="{Binding Email, UpdateSourceTrigger=PropertyChanged}"/>
-                    <!-- Aviso sobre importância do email -->
                     <StackPanel Orientation="Horizontal" Margin="0,0,0,10">
                         <TextBlock Text="⚠"
                                    Foreground="#F59E0B"
@@ -74,8 +74,27 @@
                 </StackPanel>
 
                 <!-- Senha -->
-                <PasswordBox Margin="0,0,0,4"
-                             x:Name="PwdBox"/>
+                <PasswordBox x:Name="PwdBox" Margin="0,0,0,4"/>
+
+                <!-- Lembrar minhas credenciais -->
+                <!-- Lembrar credenciais — apenas no modo login -->
+                <CheckBox x:Name="ChkRemember"
+                          Margin="0,8,0,4"
+                          IsChecked="{Binding RememberMe}"
+                          Foreground="#888888"
+                          FontSize="12">
+                    <CheckBox.Style>
+                        <Style TargetType="CheckBox">
+                            <Setter Property="Visibility" Value="Visible"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding IsRegisterMode}" Value="True">
+                                    <Setter Property="Visibility" Value="Collapsed"/>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </CheckBox.Style>
+                    <TextBlock Text="Lembrar minhas credenciais" Foreground="#888888" FontSize="12"/>
+                </CheckBox>
 
                 <!-- Erro -->
                 <TextBlock Text="{Binding ErrorMessage}"

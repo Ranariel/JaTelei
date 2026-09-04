@@ -19,8 +19,41 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+
+        // Ajusta borda/padding ao maximizar para não cobrir a barra de tarefas
+        StateChanged += OnStateChanged;
+
         ShowLogin();
         _ = CheckForUpdateAsync();
+    }
+
+    // ── Gerenciamento da janela ────────────────────────────────────────────
+
+    private void OnStateChanged(object? sender, EventArgs e)
+    {
+        if (WindowState == WindowState.Maximized)
+        {
+            // Evita cobrir a barra de tarefas do Windows
+            RootBorder.BorderThickness = new Thickness(0);
+            BtnMaxRestore.Content  = "❐";
+            BtnMaxRestore.ToolTip  = "Restaurar";
+        }
+        else
+        {
+            RootBorder.BorderThickness = new Thickness(1);
+            BtnMaxRestore.Content  = "□";
+            BtnMaxRestore.ToolTip  = "Maximizar";
+        }
+    }
+
+    private void Minimize_Click(object s, RoutedEventArgs e)  => WindowState = WindowState.Minimized;
+    private void Close_Click(object s, RoutedEventArgs e)     => Close();
+
+    private void MaxRestore_Click(object s, RoutedEventArgs e)
+    {
+        WindowState = WindowState == WindowState.Maximized
+            ? WindowState.Normal
+            : WindowState.Maximized;
     }
 
     // ── Atualização ────────────────────────────────────────────────────────
@@ -87,6 +120,13 @@ public partial class MainWindow : Window
 
     private void ShowFriends()
     {
+        // Descarta ReceiveViewModel anterior se houver
+        if (MainContent.Content is ReceiveView rv &&
+            rv.DataContext is ReceiveViewModel rvm)
+        {
+            _ = rvm.DisposeAsync().AsTask();
+        }
+
         try
         {
             var vm = new FriendsViewModel(_api, _signaling);
@@ -123,7 +163,8 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             File.AppendAllText(LogPath, $"[SharePicker] {DateTime.Now}: {ex}\n\n");
-            MessageBox.Show($"Erro ao abrir seletor:\n{ex.Message}", "Erro", MessageBoxButton.OK, MessageBoxImage.Error);
+            MessageBox.Show($"Erro ao abrir seletor:\n{ex.Message}", "Erro",
+                MessageBoxButton.OK, MessageBoxImage.Error);
         }
     }
 
@@ -133,8 +174,6 @@ public partial class MainWindow : Window
     {
         var webRtc = new WebRtcService();
         var friendId = friend.Id.ToString();
-
-        // ── Handlers com referência nomeada para poder desinscrever ──
 
         Action<string> iceCandidateReadyHandler = async c =>
             await _signaling.SendIceCandidateAsync(friendId, c);
@@ -147,7 +186,8 @@ public partial class MainWindow : Window
             try { await webRtc.SetRemoteAnswerAsync(sdp); }
             catch (Exception ex)
             {
-                File.AppendAllText(LogPath, $"[Answer/Sender] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
+                File.AppendAllText(LogPath,
+                    $"[Answer/Sender] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
             }
         };
         _signaling.AnswerReceived += answerReceivedHandler;
@@ -159,7 +199,8 @@ public partial class MainWindow : Window
             try { await webRtc.AddIceCandidateAsync(cand); }
             catch (Exception ex)
             {
-                File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
+                File.AppendAllText(LogPath,
+                    $"[ICE/Sender] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
             }
         };
         _signaling.IceCandidateReceived += iceCandReceivedHandler;
@@ -167,13 +208,8 @@ public partial class MainWindow : Window
         var offerSdp = await webRtc.CreateOfferAsync();
         await _signaling.SendOfferAsync(friendId, offerSdp);
 
-        // Inicia captura; o loop interno envia assim que a conexão ICE estiver pronta.
-        // Quando ICE conectar, ForceKeyframe() é chamado via oniceconnectionstatechange.
         webRtc.StartCapture(target: target);
 
-        // Desinscrevemos handlers quando o WebRtc for descartado (conexão encerrada).
-        // O DisposeAsync é chamado externamente (ex.: usuário fecha janela ou stop).
-        // Para capturar esse momento, registramos no IceStateChanged:
         webRtc.IceStateChanged += state =>
         {
             if (state == "closed" || state == "failed")
@@ -182,7 +218,7 @@ public partial class MainWindow : Window
                 _signaling.AnswerReceived       -= answerReceivedHandler;
                 _signaling.IceCandidateReceived -= iceCandReceivedHandler;
                 File.AppendAllText(LogPath,
-                    $"[Sender] {DateTime.Now}: ICE {state} — handlers sender desincritos\n");
+                    $"[Sender] {DateTime.Now}: ICE {state} — handlers desincritos\n");
             }
         };
     }
@@ -191,19 +227,16 @@ public partial class MainWindow : Window
 
     private void OnOfferReceived(string fromUserId, string offerSdp)
     {
-        // Cria WebRtcService e subscreve candidatos ICE ANTES do dialog,
-        // para que candidatos que chegam enquanto o usuário decide sejam
-        // bufferizados em _pendingCandidates e não perdidos.
         var webRtc = new WebRtcService();
 
-        // Handler nomeado para poder desinscrever quando o receiver for encerrado
         Action<string, string> iceCandReceivedHandler = async (from, cand) =>
         {
             if (from != fromUserId) return;
             try { await webRtc.AddIceCandidateAsync(cand); }
             catch (Exception ex)
             {
-                File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
+                File.AppendAllText(LogPath,
+                    $"[ICE/Recv] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
             }
         };
         _signaling.IceCandidateReceived += iceCandReceivedHandler;
@@ -218,7 +251,6 @@ public partial class MainWindow : Window
 
             if (result != MessageBoxResult.Yes)
             {
-                // Usuário recusou — desinscrevemos o handler e descartamos o WebRtcService
                 _signaling.IceCandidateReceived -= iceCandReceivedHandler;
                 _ = webRtc.DisposeAsync().AsTask();
                 return;
@@ -236,22 +268,15 @@ public partial class MainWindow : Window
         var vm = new ReceiveViewModel(webRtc, _signaling, fromUserId);
         vm.StopRequested += () =>
         {
-            // Desinscrevemos o handler de ICE do receiver ao parar
             _signaling.IceCandidateReceived -= iceCandReceivedHandler;
-            _ = webRtc.DisposeAsync().AsTask();
+            // Dispõe via ViewModel (que desinscreve seus próprios handlers corretamente)
+            _ = vm.DisposeAsync().AsTask();
             Dispatcher.Invoke(ShowFriends);
         };
 
-        // CreateAnswerAsync cria _pc e drena _pendingCandidates (candidatos
-        // que chegaram enquanto o dialog estava aberto já estão bufferizados)
         var answerSdp = await webRtc.CreateAnswerAsync(offerSdp);
         await _signaling.SendAnswerAsync(fromUserId, answerSdp);
 
         Dispatcher.Invoke(() => MainContent.Content = new ReceiveView { DataContext = vm });
     }
-
-    // ── Barra de título ────────────────────────────────────────────────────
-
-    private void Minimize_Click(object s, RoutedEventArgs e) => WindowState = WindowState.Minimized;
-    private void Close_Click(object s, RoutedEventArgs e) => Close();
 }
