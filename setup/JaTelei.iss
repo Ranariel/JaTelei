@@ -41,11 +41,11 @@ Name: "desktopicon"; Description: "Criar ícone na Área de Trabalho"; GroupDesc
 [Files]
 Source: "..\publish\{#MyExeName}"; DestDir: "{app}"; DestName: "JaTelei.exe"; Flags: ignoreversion
 Source: "..\publish\JaTelei.Capture.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-; FFmpeg DLLs — necessários para codificação H264 em todas as edições do Windows (incluindo N/KN)
-Source: "..\publish\avcodec-61.dll";   DestDir: "{app}"; Flags: ignoreversion
-Source: "..\publish\avutil-59.dll";    DestDir: "{app}"; Flags: ignoreversion
-Source: "..\publish\swscale-8.dll";    DestDir: "{app}"; Flags: ignoreversion
-Source: "..\publish\swresample-5.dll"; DestDir: "{app}"; Flags: ignoreversion
+; FFmpeg DLLs — necessários para H264 em todas as edições do Windows (incluindo N/KN)
+Source: "..\publish\avcodec.dll";    DestDir: "{app}"; Flags: ignoreversion
+Source: "..\publish\avutil.dll";     DestDir: "{app}"; Flags: ignoreversion
+Source: "..\publish\swscale.dll";    DestDir: "{app}"; Flags: ignoreversion
+Source: "..\publish\swresample.dll"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Ja Telei";             Filename: "{app}\JaTelei.exe"
