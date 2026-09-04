@@ -41,17 +41,33 @@ jobs:
         $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
         Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
         Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
+
+        # Find the bin directory (structure may vary between releases)
         $binDir = Get-ChildItem ffmpeg_tmp -Recurse -Directory | Where-Object { $_.Name -eq "bin" } | Select-Object -First 1
+        if (-not $binDir) { Write-Error "FFmpeg bin/ not found in zip"; exit 1 }
+        Write-Host "FFmpeg bin: $($binDir.FullName)"
+        Get-ChildItem $binDir.FullName -Filter "*.dll" | Select-Object Name
+
         New-Item -ItemType Directory -Force -Path ffmpeg_dlls | Out-Null
-        foreach ($dll in @("avcodec-61.dll","avutil-59.dll","swscale-8.dll","swresample-5.dll")) {
-          $src = Join-Path $binDir.FullName $dll
-          if (Test-Path $src) {
-            Copy-Item $src ffmpeg_dlls/
+
+        # Copy and rename to unversioned names so P/Invoke never breaks on FFmpeg updates
+        foreach ($pair in @(
+          @("avcodec",   "avcodec.dll"),
+          @("avutil",    "avutil.dll"),
+          @("swscale",   "swscale.dll"),
+          @("swresample","swresample.dll")
+        )) {
+          $prefix = $pair[0]; $dest = $pair[1]
+          $src = Get-ChildItem $binDir.FullName -Filter "${prefix}-*.dll" | Select-Object -First 1
+          if (-not $src) { $src = Get-ChildItem $binDir.FullName -Filter "${prefix}.dll" | Select-Object -First 1 }
+          if ($src) {
+            Copy-Item $src.FullName (Join-Path "ffmpeg_dlls" $dest)
+            Write-Host "Copied $($src.Name) -> $dest"
           } else {
-            Write-Warning "DLL not found in bin: $dll"
+            Write-Error "Could not find ${prefix} DLL in FFmpeg bin"
+            exit 1
           }
         }
-        Get-ChildItem ffmpeg_dlls
 
     - name: Set version
       run: echo "VERSION=1.0.${{ github.run_number }}" >> $env:GITHUB_ENV

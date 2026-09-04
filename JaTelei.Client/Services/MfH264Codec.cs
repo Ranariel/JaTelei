@@ -13,9 +13,9 @@ namespace JaTelei.Client.Services
     // -----------------------------------------------------------------------
     internal static unsafe class Ffmpeg
     {
-        const string AvCodec = "avcodec-61";
-        const string AvUtil  = "avutil-59";
-        const string SwScale = "swscale-8";
+        const string AvCodec = "avcodec";
+        const string AvUtil  = "avutil";
+        const string SwScale = "swscale";
 
         // ---- avutil --------------------------------------------------------
         [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
