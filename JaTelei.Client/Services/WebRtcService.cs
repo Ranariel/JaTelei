@@ -298,6 +298,7 @@ public class WebRtcService : IAsyncDisposable
 
             // GDI/software fallback encoder (only used when DLL init fails)
             MfH264Encoder? gdiEncoder = null;
+            bool gdiEncoderFailed = false; // set on first failure — stops log flood
             int encW = 0, encH = 0;
             _framesSent = 0;
 
@@ -334,14 +335,29 @@ public class WebRtcService : IAsyncDisposable
                                 int dstH = targetHeight > 0 ? targetHeight : h;
                                 var (bgra, dstW, dstHH) = ResizeBgra(raw, w, h, dstH);
 
-                                if (gdiEncoder == null || dstW != encW || dstHH != encH)
+                                if (!gdiEncoderFailed)
                                 {
-                                    gdiEncoder?.Dispose();
-                                    gdiEncoder = new MfH264Encoder(dstW, dstHH,
-                                                                   effectiveFps, bitrateKbps * 1000);
-                                    encW = dstW; encH = dstHH;
+                                    if (gdiEncoder == null || dstW != encW || dstHH != encH)
+                                    {
+                                        gdiEncoder?.Dispose();
+                                        gdiEncoder = null;
+                                        try
+                                        {
+                                            gdiEncoder = new MfH264Encoder(dstW, dstHH,
+                                                                           effectiveFps, bitrateKbps * 1000);
+                                            encW = dstW; encH = dstHH;
+                                        }
+                                        catch (Exception ex)
+                                        {
+                                            gdiEncoderFailed = true;
+                                            File.AppendAllText(LogPath,
+                                                $"[Capture/GdiEncoder] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n" +
+                                                $"  GDI encoder desativado. Verifique se o Media Feature Pack está instalado (Windows N/KN).\n");
+                                        }
+                                    }
+                                    if (gdiEncoder != null)
+                                        h264 = gdiEncoder.Encode(bgra, dstW, dstHH);
                                 }
-                                h264 = gdiEncoder.Encode(bgra, dstW, dstHH);
                             }
                         }
 

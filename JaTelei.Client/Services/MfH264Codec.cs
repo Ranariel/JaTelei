@@ -23,6 +23,15 @@ internal static class MfNative
     [DllImport("mfplat.dll", ExactSpelling = true)]
     public static extern int MFCreateSample(out IntPtr ppIMFSample);
 
+    [DllImport("mfplat.dll", ExactSpelling = true)]
+    public static extern int MFTEnumEx(
+        ref Guid guidCategory, uint Flags,
+        IntPtr pInputType, IntPtr pOutputType,
+        out IntPtr pppMFTActivate, out uint pcMFTActivate);
+
+    [DllImport("ole32.dll", ExactSpelling = true)]
+    public static extern void CoTaskMemFree(IntPtr pv);
+
     [DllImport("ole32.dll", ExactSpelling = true)]
     public static extern int CoCreateInstance(
         ref Guid rclsid, IntPtr pUnkOuter, uint dwClsContext,
@@ -33,6 +42,7 @@ internal static class MfNative
     public static readonly Guid CLSID_MSH264EncoderMFT  = new("6CA50344-051A-4DED-9779-A43305165E35");
     public static readonly Guid CLSID_CMSH264DecoderMFT = new("62CE7E72-4C71-4D20-B15D-452831A87D9D");
     public static readonly Guid IID_IMFTransform         = new("bf94c121-5b05-4e6f-9000-ba5ac3c30e28");
+    public static readonly Guid MFT_CATEGORY_VIDEO_ENCODER = new("f79eac7d-e545-4387-bdee-d647d7bde42a");
 
     public static readonly Guid MF_MT_MAJOR_TYPE     = new("48eba18e-f8c9-4687-bf11-0a74c9f96a8f");
     public static readonly Guid MF_MT_SUBTYPE        = new("f7e34c9a-42e8-4714-b74b-cb29d72c35e5");
@@ -98,6 +108,9 @@ internal static class MfNative
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     public delegate int Fn_ProcessInput(IntPtr self, uint streamId, IntPtr sample, uint flags);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    public delegate int Fn_ActivateObject(IntPtr self, ref Guid riid, out IntPtr ppv);
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     public delegate int Fn_ProcessOutput(IntPtr self, uint flags, uint count,
@@ -231,15 +244,64 @@ public sealed class MfH264Encoder : IDisposable
     private long _sampleTime;
     private bool _streaming;
 
+    /// <summary>
+    /// Fallback: usa MFTEnumEx para encontrar qualquer encoder H264 disponível no sistema.
+    /// Funciona em Windows N/KN (sem Media Feature Pack no CLSID direto) e com drivers
+    /// que não registram CLSID_MSH264EncoderMFT mas têm MFT enumerável.
+    /// </summary>
+    private static IntPtr TryEnumerateEncoder()
+    {
+        var cat = MfNative.MFT_CATEGORY_VIDEO_ENCODER;
+        int hr  = MfNative.MFTEnumEx(ref cat, 0, IntPtr.Zero, IntPtr.Zero,
+                                      out IntPtr ppActivate, out uint count);
+        if (hr < 0 || count == 0 || ppActivate == IntPtr.Zero)
+            return IntPtr.Zero;
+
+        var    iid = MfNative.IID_IMFTransform;
+        IntPtr mft = IntPtr.Zero;
+
+        for (uint i = 0; i < count; i++)
+        {
+            IntPtr act = Marshal.ReadIntPtr(ppActivate, (int)(i * IntPtr.Size));
+            if (act == IntPtr.Zero) continue;
+
+            // IMFActivate::ActivateObject = slot 33 (IUnknown 3 + IMFAttributes 30 = 33)
+            int hrAct = MfNative.Vtbl<MfNative.Fn_ActivateObject>(act, 33)(act, ref iid, out IntPtr obj);
+            MfNative.Release(ref act);
+
+            if (hrAct >= 0 && obj != IntPtr.Zero)
+            {
+                mft = obj;
+                // Libera activates restantes
+                for (uint j = i + 1; j < count; j++)
+                {
+                    IntPtr a = Marshal.ReadIntPtr(ppActivate, (int)(j * IntPtr.Size));
+                    if (a != IntPtr.Zero) MfNative.Release(ref a);
+                }
+                break;
+            }
+        }
+
+        MfNative.CoTaskMemFree(ppActivate);
+        return mft;
+    }
+
     public MfH264Encoder(int width, int height, int fps = 30, int bitrateBps = 2_500_000)
     {
         _fps = fps;
         MfNative.MFStartup(MfNative.MF_VERSION);
 
-        var clsid = MfNative.CLSID_MSH264EncoderMFT;
-        var iid   = MfNative.IID_IMFTransform;
-        Throw(MfNative.CoCreateInstance(ref clsid, IntPtr.Zero,
-              MfNative.CLSCTX_INPROC_SERVER, ref iid, out _mft), "CoCreateInstance encoder");
+        var clsid    = MfNative.CLSID_MSH264EncoderMFT;
+        var iid      = MfNative.IID_IMFTransform;
+        int hrCreate = MfNative.CoCreateInstance(ref clsid, IntPtr.Zero,
+                        MfNative.CLSCTX_INPROC_SERVER, ref iid, out _mft);
+        if (hrCreate < 0)
+        {
+            // CLSID direto falhou — tenta enumerar encoders disponíveis (MFTEnumEx)
+            _mft = TryEnumerateEncoder();
+            if (_mft == IntPtr.Zero)
+                Throw(hrCreate, "CoCreateInstance encoder");
+        }
 
         // Output type (H264) must be configured before input type
         MfNative.MFCreateMediaType(out var ot);
