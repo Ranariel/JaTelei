@@ -34,18 +34,20 @@ public class WebRtcService : IAsyncDisposable
         {
             new() { urls = "stun:stun.l.google.com:19302" },
             new() { urls = "stun:stun1.l.google.com:19302" },
+            // TURN UDP — funciona na maioria das redes
             new()
             {
                 urls       = "turn:TURN_SERVER_REMOVED:3478",
                 username   = "jatelei",
                 credential = "TURN_CREDENTIAL_REMOVED"
             },
+            // TURN TCP — fallback para redes que bloqueiam UDP
             new()
             {
-                urls       = "turns:TURN_SERVER_REMOVED:5349",
+                urls       = "turn:TURN_SERVER_REMOVED:3478?transport=tcp",
                 username   = "jatelei",
                 credential = "TURN_CREDENTIAL_REMOVED"
-            }
+            },
         }
     };
 
@@ -80,7 +82,8 @@ public class WebRtcService : IAsyncDisposable
         _pc.onicecandidate += c =>
         {
             var json = c.toJSON();
-            File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: candidato local: {json}\n");
+            var tipo = ExtractCandType(json);
+            File.AppendAllText(LogPath, $"[ICE/Sender] {DateTime.Now}: candidato [{tipo}]: {json}\n");
             IceCandidateReady?.Invoke(json);
         };
         _pc.oniceconnectionstatechange += state =>
@@ -143,7 +146,8 @@ public class WebRtcService : IAsyncDisposable
         _pc.onicecandidate += c =>
         {
             var json = c.toJSON();
-            File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: candidato local: {json}\n");
+            var tipo = ExtractCandType(json);
+            File.AppendAllText(LogPath, $"[ICE/Recv] {DateTime.Now}: candidato [{tipo}]: {json}\n");
             IceCandidateReady?.Invoke(json);
         };
         _pc.oniceconnectionstatechange += state =>
@@ -220,6 +224,16 @@ public class WebRtcService : IAsyncDisposable
                     $"[ICE/Drain] {DateTime.Now}: {ex.GetType().Name}: {ex.Message}\n");
             }
         }
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /// <summary>Extrai "host", "srflx" ou "relay" da string de candidato ICE para logging.</summary>
+    private static string ExtractCandType(string candidateJson)
+    {
+        foreach (var t in new[] { "relay", "srflx", "prflx", "host" })
+            if (candidateJson.Contains($"typ {t}")) return t;
+        return "?";
     }
 
     // ── Annex B ───────────────────────────────────────────────────────────────
