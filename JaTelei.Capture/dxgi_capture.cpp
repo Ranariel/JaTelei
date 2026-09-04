@@ -5,7 +5,9 @@
 #define _WIN32_WINNT 0x0A00
 #define WINVER       0x0A00
 #define COBJMACROS
+#ifndef NOMINMAX
 #define NOMINMAX
+#endif
 
 #include "capture.h"
 
@@ -17,6 +19,7 @@
 // D3D / DXGI
 #include <d3d11.h>
 #include <d3d11_1.h>
+#include <d3d11_4.h>
 #include <dxgi1_2.h>
 #include <dxgi1_6.h>
 
