@@ -59,6 +59,10 @@ public partial class SharePickerDialog : Window
     {
         InitializeComponent();
 
+        // Limitar altura ao espaço útil da tela (WorkArea), com 10% de margem
+        var workArea = SystemParameters.WorkArea;
+        MaxHeight = workArea.Height * 0.90;
+
         CboResolution.ItemsSource   = Resolutions;
         CboResolution.SelectedIndex = 4;   // 720p por padrao
 
