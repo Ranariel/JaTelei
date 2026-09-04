@@ -19,6 +19,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        Title = AppVersion.DisplayName;
 
         // Ajusta borda/padding ao maximizar para não cobrir a barra de tarefas
         StateChanged += OnStateChanged;
