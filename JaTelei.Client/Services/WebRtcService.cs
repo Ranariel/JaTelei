@@ -348,21 +348,26 @@ public class WebRtcService : IAsyncDisposable
 
                             if (raw != null && w > 0 && h > 0)
                             {
-                                int dstH = targetHeight > 0 ? targetHeight : h;
-                                var (bgra, dstW, dstHH) = ResizeBgra(raw, w, h, dstH);
+                                // Compute target encoding resolution (maintain aspect ratio, align to 16)
+                                // sws_scale inside MfH264Encoder handles the actual downscale — no GDI resize needed.
+                                int encTargetH = targetHeight > 0 ? targetHeight : h;
+                                int encTargetW = (int)(w * ((double)encTargetH / h));
+                                if (encTargetW % 16 != 0) encTargetW = (encTargetW / 16) * 16;
+                                if (encTargetH % 16 != 0) encTargetH = (encTargetH / 16) * 16;
+                                if (encTargetW <= 0) encTargetW = 16;
+                                if (encTargetH <= 0) encTargetH = 16;
 
                                 if (!gdiEncoderFailed)
                                 {
-                                    if (gdiEncoder == null || dstW != encW || dstHH != encH)
+                                    if (gdiEncoder == null || encTargetW != encW || encTargetH != encH)
                                     {
                                         gdiEncoder?.Dispose();
                                         gdiEncoder = null;
                                         try
                                         {
-                                            int gdiBps = ComputeBitrateKbps(dstW, dstHH, effectiveFps) * 1000;
-                                            gdiEncoder = new MfH264Encoder(dstW, dstHH,
-                                                                           effectiveFps, gdiBps);
-                                            encW = dstW; encH = dstHH;
+                                            gdiEncoder = new MfH264Encoder(encTargetW, encTargetH,
+                                                                           effectiveFps, bitrateKbps * 1000);
+                                            encW = encTargetW; encH = encTargetH;
                                         }
                                         catch (Exception ex)
                                         {
@@ -379,7 +384,8 @@ public class WebRtcService : IAsyncDisposable
                                             _forceGdiKeyframe = false;
                                             gdiEncoder.ForceKeyframe();
                                         }
-                                        h264 = gdiEncoder.Encode(bgra, dstW, dstHH);
+                                        // Pass raw full-resolution capture; encoder's sws_scale downscales internally
+                                        h264 = gdiEncoder.Encode(raw, w, h);
                                     }
                                 }
                             }
