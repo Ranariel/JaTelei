@@ -66,36 +66,34 @@ jobs:
           Copy-Item "JaTelei.Client/JaTelei.Capture.dll" -Destination "publish/"
         }
 
-    - name: Copy FFmpeg DLLs into publish folder
-      id: ffmpeg
+    - name: Download FFmpeg (BtbN GPL shared, win64)
       run: |
-        $dest = "publish"
-        $copied = 0
+        # BtbN/FFmpeg-Builds latest — GPL shared build for Windows x64
+        $asset = "ffmpeg-master-latest-win64-gpl-shared.zip"
+        $url   = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/$asset"
+        Write-Host "Downloading $url"
+        Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip -UseBasicParsing
 
-        # 1) Build output — primary source when dotnet build extracted them
-        Get-ChildItem "JaTelei.Client" -Recurse -ErrorAction SilentlyContinue |
-          Where-Object { $_.Name -match "^(av|sw).+\.dll$" } |
-          ForEach-Object {
-            Copy-Item $_.FullName -Destination $dest -Force
-            Write-Host "bin: $($_.Name)"
-            $copied++
+        Write-Host "Extracting..."
+        Expand-Archive -Path ffmpeg.zip -DestinationPath ffmpeg -Force
+
+        # Folder name inside the zip matches the asset name (minus .zip)
+        $binDir = Get-ChildItem ffmpeg -Directory | Select-Object -First 1
+        $binDir = Join-Path $binDir.FullName "bin"
+        Write-Host "bin dir: $binDir"
+
+        # Copy only the four DLLs the app needs
+        foreach ($prefix in @("avcodec", "avutil", "swresample", "swscale")) {
+          $dll = Get-ChildItem $binDir -Filter "$prefix-*.dll" | Select-Object -First 1
+          if ($dll) {
+            Copy-Item $dll.FullName -Destination "publish/" -Force
+            Write-Host "  copied $($dll.Name)"
+          } else {
+            Write-Warning "  $prefix DLL not found in $binDir"
           }
-
-        # 2) Full NuGet cache — any win-x64 subfolder in any package
-        Get-ChildItem "$env:USERPROFILE\.nuget\packages" -Recurse -ErrorAction SilentlyContinue |
-          Where-Object { $_.Name -match "^(av|sw).+\.dll$" -and $_.FullName -match "win.?x64|win64" } |
-          ForEach-Object {
-            Copy-Item $_.FullName -Destination $dest -Force
-            Write-Host "nuget: $($_.Name)  [$($_.DirectoryName)]"
-            $copied++
-          }
-
-        Write-Host "FFmpeg DLLs copied: $copied"
-        if ($copied -gt 0) {
-          echo "HAS_FFMPEG=1" >> $env:GITHUB_ENV
-        } else {
-          Write-Host "WARNING: No FFmpeg DLLs found — installer will ship without them"
         }
+
+        echo "HAS_FFMPEG=1" >> $env:GITHUB_ENV
 
     - name: List all DLLs in publish (diagnostic)
       run: |
@@ -106,7 +104,7 @@ jobs:
 
     - name: Build Inno Setup installer
       run: |
-        # Use array splat so no empty string is ever passed to ISCC
+        # Array splat — sem string vazia passada ao ISCC
         $isccArgs = @(
           "/DMyAppVersion=${{ env.VERSION }}",
           "/DMyExeName=JaTelei-${{ env.VERSION }}.exe",
