@@ -39,9 +39,14 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Criar ícone na Área de Trabalho"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
+; Executable (self-contained — .NET runtime already bundled, no .NET install needed)
 Source: "..\publish\{#MyExeName}"; DestDir: "{app}"; DestName: "JaTelei.exe"; Flags: ignoreversion
+
+; C++ screen-capture DLL (static CRT — no VC++ Redistributable needed)
 Source: "..\publish\JaTelei.Capture.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-; FFmpeg shared libs — only included when present (CI passes /DHasFfmpeg when it finds them)
+
+; FFmpeg shared libs (avcodec, avutil, swresample, swscale)
+; Only present when SIPSorceryMedia.Windows ships them; CI passes /DHasFfmpeg when found.
 #ifdef HasFfmpeg
 Source: "..\publish\av*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
 Source: "..\publish\sw*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
@@ -60,3 +65,35 @@ Filename: "{app}\JaTelei.exe"; Description: "Iniciar Ja Telei agora"; Flags: now
 
 [UninstallRun]
 Filename: "taskkill.exe"; Parameters: "/F /IM JaTelei.exe"; Flags: runhidden; RunOnceId: "KillApp"
+
+[Code]
+// ---------------------------------------------------------------------------
+// Verifica pré-requisitos do sistema antes de instalar
+// ---------------------------------------------------------------------------
+
+// Checa se a Media Foundation está disponível (ausente no Windows N/KN sem
+// o Media Feature Pack). O Ja Telei usa MF para codificação de vídeo H.264.
+function MediaFoundationAvailable: Boolean;
+begin
+  Result := FileExists(ExpandConstant('{sys}\mfplat.dll'));
+end;
+
+// Chamado pelo Inno antes de mostrar as páginas do instalador
+function InitializeSetup(): Boolean;
+var
+  Msg: String;
+begin
+  Result := True;
+
+  if not MediaFoundationAvailable then
+  begin
+    Msg := 'Atenção: esta versão do Windows não possui o Media Foundation instalado.' + #13#10 + #13#10 +
+           'O Ja Telei pode não conseguir codificar vídeo H.264 corretamente.' + #13#10 + #13#10 +
+           'Para corrigir, instale o "Media Feature Pack" em:' + #13#10 +
+           'Configurações → Aplicativos → Recursos opcionais.' + #13#10 + #13#10 +
+           'Deseja continuar a instalação mesmo assim?';
+
+    if MsgBox(Msg, mbConfirmation, MB_YESNO) = IDNO then
+      Result := False;
+  end;
+end;
