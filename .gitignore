@@ -11,12 +11,14 @@ build/
 # Publish output
 publish/
 
+# Installer output (gerado pelo Inno Setup)
+installer/
+
 # Native DLL (compilado localmente)
-JaClipei.Client/JaClipei.Capture.dll
+JaTelei.Client/JaTelei.Capture.dll
 
 # dotnet
-*.user
 project.lock.json
--e 
+
 # Configuração local com credenciais reais (gerado pelo CI via secrets)
 appsettings.local.json
