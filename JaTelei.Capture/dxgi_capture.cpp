@@ -574,10 +574,27 @@ static HRESULT InitEncoder(EngineState* e)
     MFSetAttributeRatio(outMT.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
     outMT->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
     if (e->videoFmt == MFVideoFormat_H264)
-        outMT->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Base);
+        outMT->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main);  // main: CABAC on → better quality
 
     hr = e->encoder->SetOutputType(0, outMT.Get(), 0);
     CHECK_HR(hr, "SetOutputType");
+
+    // Codec attributes — must be set before BEGIN_STREAMING
+    {
+        ComPtr<ICodecAPI> ca;
+        if (SUCCEEDED(e->encoder->QueryInterface(IID_PPV_ARGS(&ca)))) {
+            // Low latency: encoder outputs one frame per input (no frame buffering).
+            // Without this, MFT buffers 4-5 frames → periodic freeze bursts.
+            VARIANT vll; VariantInit(&vll);
+            vll.vt = VT_BOOL; vll.boolVal = VARIANT_TRUE;
+            ca->SetValue(&CODECAPI_AVEncCommonLowLatency, &vll);
+
+            // GOP size: IDR every 1s — stale rows never persist across cut
+            VARIANT vgop; VariantInit(&vgop);
+            vgop.vt = VT_UI4; vgop.uintVal = (UINT)e->params.fps;
+            ca->SetValue(&CODECAPI_AVEncMPVGOPSize, &vgop);
+        }
+    }
 
     e->encoder->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     e->encoder->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
