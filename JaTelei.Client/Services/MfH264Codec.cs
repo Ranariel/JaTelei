@@ -207,6 +207,7 @@ namespace JaTelei.Client.Services
         public const uint AV_CODEC_ID_H264    = 27;
         public const int  SWS_BILINEAR        = 2;
         public const int  SWS_BICUBIC         = 4;     // sharper text than bilinear when downscaling
+        public const int  SWS_AREA            = 0x20;  // area averaging — ideal para downscale de tela (sem ringing)
         public const int  SWS_ACCURATE_RND    = 0x40000;
     }
 
@@ -360,7 +361,7 @@ namespace JaTelei.Client.Services
             // Options that remain in the table (av_opt_set still works with SEARCH_CHILDREN):
             LogOpt(logPath, "b",         bitrateBps.ToString());
             LogOpt(logPath, "time_base", $"1/{_fps}");
-            LogOpt(logPath, "g",         _fps.ToString()); // keyframe a cada 1s — com intra-refresh off, fundo não fica stale
+            LogOpt(logPath, "g",         (_fps * 2).ToString()); // IDR a cada 2s — menos burst RTP, menos risco de congelamento
             LogOpt(logPath, "bf",        "0");
             // aq-mode=2 (variance AQ) distribui bits por variância local —
             // texto/borda recebe mais bits, áreas planas menos → menos pixelação em movimento
@@ -426,7 +427,7 @@ namespace JaTelei.Client.Services
                 _swsCtx = Ffmpeg.sws_getContext(
                     width,   height,   Ffmpeg.AV_PIX_FMT_BGRA,
                     _width,  _height,  Ffmpeg.AV_PIX_FMT_YUV420P,
-                    Ffmpeg.SWS_BICUBIC | Ffmpeg.SWS_ACCURATE_RND, null, null, null);
+                    Ffmpeg.SWS_AREA, null, null, null);  // área — sem ringing em texto
                 if (_swsCtx == null) return null;  // leave _srcW/_srcH=0; recreate next frame
                 _srcW = width; _srcH = height;     // only mark as valid after successful init
             }
