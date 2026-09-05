@@ -20,9 +20,14 @@ public class UpdateService
         {
             var info = await _http.GetFromJsonAsync<UpdateInfo>(CheckUrl);
             if (info is null) return null;
-            return string.Compare(info.Version, currentVersion, StringComparison.OrdinalIgnoreCase) > 0
-                ? info
-                : null;
+
+            // Usa Version.Parse para comparação numérica correta.
+            // string.Compare é lexicográfico e falha com versões de 3+ dígitos:
+            // ex: "1.0.99" > "1.0.100" como string, mas 1.0.99 < 1.0.100 numericamente.
+            if (!Version.TryParse(info.Version, out var remoteVer)) return null;
+            if (!Version.TryParse(currentVersion, out var localVer)) return null;
+
+            return remoteVer > localVer ? info : null;
         }
         catch
         {
