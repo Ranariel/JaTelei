@@ -351,8 +351,7 @@ namespace JaTelei.Client.Services
             *(int*)(ctxBytes + 116) = height; // height
             *(int*)(ctxBytes + 136) = Ffmpeg.AV_PIX_FMT_YUV420P; // pix_fmt = 0
             File.AppendAllText(logPath,
-                $"  direct: framerate={_fps}/1 width={width} height={height} pix_fmt=0(yuv420p)
-");
+                "  direct: framerate=" + _fps + "/1 width=" + width + " height=" + height + " pix_fmt=0(yuv420p)\n");
 
             // Options that remain in the table (av_opt_set still works with SEARCH_CHILDREN):
             LogOpt(logPath, "b",         bitrateBps.ToString());
@@ -362,8 +361,7 @@ namespace JaTelei.Client.Services
 
             // Verify the direct writes landed correctly.
             File.AppendAllText(logPath,
-                $"  verify: width={*(int*)(ctxBytes+112)} height={*(int*)(ctxBytes+116)} pix_fmt={*(int*)(ctxBytes+136)}
-");
+                "  verify: width=" + *(int*)(ctxBytes+112) + " height=" + *(int*)(ctxBytes+116) + " pix_fmt=" + *(int*)(ctxBytes+136) + "\n");
 
             AVDictionary* opts = null;
             SetDict(&opts, "preset",  "ultrafast");
