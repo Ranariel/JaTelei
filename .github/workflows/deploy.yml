@@ -139,10 +139,9 @@ jobs:
     runs-on: ubuntu-latest
     if: github.ref == 'refs/heads/main'
     steps:
-    - name: Trigger VPS deploy
-      uses: appleboy/ssh-action@v1
-      with:
-        host: ${{ secrets.VPS_HOST }}
-        username: root
-        key: ${{ secrets.VPS_SSH_KEY }}
-        script: /opt/screenshare/deploy.sh --version ${{ needs.build.outputs.version }}
+    - name: Trigger VPS deploy via webhook
+      run: |
+        curl -sf -X POST https://jaclipei.com/deploy-hook \
+          -H "Authorization: Bearer ${{ secrets.DEPLOY_WEBHOOK_SECRET }}" \
+          -H "Content-Type: application/json" \
+          -d '{"version":"${{ needs.build.outputs.version }}"}'
