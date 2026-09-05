@@ -206,6 +206,7 @@ namespace JaTelei.Client.Services
         public const int  AV_PIX_FMT_YUV420P = 0;
         public const uint AV_CODEC_ID_H264    = 27;
         public const int  SWS_BILINEAR        = 2;
+        public const int  SWS_BICUBIC         = 4;     // sharper text than bilinear when downscaling
         public const int  SWS_ACCURATE_RND    = 0x40000;
     }
 
@@ -365,14 +366,14 @@ namespace JaTelei.Client.Services
             // texto/borda recebe mais bits, áreas planas menos → menos pixelação em movimento
             // intra-refresh=0: desabilitar varredura top→bottom (causa do rodapé pixelado com zerolatency);
             // me=hex: motion estimation rápida — umh é pesada demais para 60fps em software
-            LogOpt(logPath, "x264-params", "intra-refresh=0:aq-mode=1:me=hex:force-cfr=1");
+            LogOpt(logPath, "x264-params", "intra-refresh=0:aq-mode=1:me=hex:force-cfr=1:qpmax=30");
 
             // Verify the direct writes landed correctly.
             File.AppendAllText(logPath,
                 "  verify: width=" + *(int*)(ctxBytes+112) + " height=" + *(int*)(ctxBytes+116) + " pix_fmt=" + *(int*)(ctxBytes+136) + "\n");
 
             AVDictionary* opts = null;
-            SetDict(&opts, "preset",  "veryfast");
+            SetDict(&opts, "preset",  "superfast"); // veryfast can exceed 60fps budget (~12ms); superfast ~5ms
             SetDict(&opts, "tune",    "zerolatency");
             SetDict(&opts, "profile", "main");
 
@@ -422,12 +423,12 @@ namespace JaTelei.Client.Services
             if (width != _srcW || height != _srcH)
             {
                 if (_swsCtx != null) Ffmpeg.sws_freeContext(_swsCtx);
-                _srcW = width; _srcH = height;
                 _swsCtx = Ffmpeg.sws_getContext(
                     width,   height,   Ffmpeg.AV_PIX_FMT_BGRA,
                     _width,  _height,  Ffmpeg.AV_PIX_FMT_YUV420P,
-                    Ffmpeg.SWS_BILINEAR | Ffmpeg.SWS_ACCURATE_RND, null, null, null);
-                if (_swsCtx == null) return null;
+                    Ffmpeg.SWS_BICUBIC | Ffmpeg.SWS_ACCURATE_RND, null, null, null);
+                if (_swsCtx == null) return null;  // leave _srcW/_srcH=0; recreate next frame
+                _srcW = width; _srcH = height;     // only mark as valid after successful init
             }
 
             if (Ffmpeg.av_frame_make_writable(_frame) < 0) return null;
