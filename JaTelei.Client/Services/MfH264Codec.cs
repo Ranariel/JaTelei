@@ -407,28 +407,7 @@ namespace JaTelei.Client.Services
                 File.AppendAllText(lp, $"  av_opt_set {optName}={optVal} → {r} ({Ffmpeg.AvErrStr(r)})\n");
             }
 
-            void LogOptInt(string lp, string optName, long optVal)
-            {
-                byte* k = stackalloc byte[64]; WriteAscii(k, optName);
-                // Try av_opt_set_int (more direct than string conversion).
-                int r = Ffmpeg.av_opt_set_int(_ctx, k, optVal, Ffmpeg.AV_OPT_SEARCH_CHILDREN);
-                File.AppendAllText(lp, $"  av_opt_set_int {optName}={optVal} → {r} ({Ffmpeg.AvErrStr(r)})\n");
-                if (r != 0)
-                {
-                    // Fallback: string form (av_opt_set parses integers from decimal strings).
-                    byte* vs = stackalloc byte[64]; WriteAscii(vs, optVal.ToString());
-                    int r2 = Ffmpeg.av_opt_set(_ctx, k, vs, Ffmpeg.AV_OPT_SEARCH_CHILDREN);
-                    File.AppendAllText(lp, $"  av_opt_set {optName}={optVal} (fallback) → {r2} ({Ffmpeg.AvErrStr(r2)})\n");
-                }
-            }
 
-            long ReadOpt(string optName)
-            {
-                byte* k = stackalloc byte[64]; WriteAscii(k, optName);
-                long v = -999;
-                Ffmpeg.av_opt_get_int(_ctx, k, Ffmpeg.AV_OPT_SEARCH_CHILDREN, &v);
-                return v;
-            }
         }
 
         public byte[]? Encode(byte[] bgra, int width, int height)
