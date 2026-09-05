@@ -46,28 +46,19 @@ jobs:
         $binDir = Get-ChildItem ffmpeg_tmp -Recurse -Directory | Where-Object { $_.Name -eq "bin" } | Select-Object -First 1
         if (-not $binDir) { Write-Error "FFmpeg bin/ not found in zip"; exit 1 }
         Write-Host "FFmpeg bin: $($binDir.FullName)"
-        Get-ChildItem $binDir.FullName -Filter "*.dll" | Select-Object Name
 
         New-Item -ItemType Directory -Force -Path ffmpeg_dlls | Out-Null
 
-        # Copy and rename to unversioned names so P/Invoke never breaks on FFmpeg updates
-        foreach ($pair in @(
-          @("avcodec",   "avcodec.dll"),
-          @("avutil",    "avutil.dll"),
-          @("swscale",   "swscale.dll"),
-          @("swresample","swresample.dll")
-        )) {
-          $prefix = $pair[0]; $dest = $pair[1]
-          $src = Get-ChildItem $binDir.FullName -Filter "${prefix}-*.dll" | Select-Object -First 1
-          if (-not $src) { $src = Get-ChildItem $binDir.FullName -Filter "${prefix}.dll" | Select-Object -First 1 }
-          if ($src) {
-            Copy-Item $src.FullName (Join-Path "ffmpeg_dlls" $dest)
-            Write-Host "Copied $($src.Name) -> $dest"
-          } else {
-            Write-Error "Could not find ${prefix} DLL in FFmpeg bin"
-            exit 1
-          }
+        # Copy ALL av*/sw* DLLs with their ORIGINAL VERSIONED names.
+        # Do NOT rename them — avcodec-63.dll internally imports "avutil-59.dll" by
+        # that exact name, so renaming would break the Windows loader dependency chain.
+        Get-ChildItem $binDir.FullName -Filter "*.dll" | Where-Object { $_.Name -match "^(av|sw)" } | ForEach-Object {
+          Copy-Item $_.FullName (Join-Path "ffmpeg_dlls" $_.Name)
+          Write-Host "Copied $($_.Name)"
         }
+
+        Write-Host "FFmpeg DLLs to be bundled:"
+        Get-ChildItem ffmpeg_dlls -Filter "*.dll" | Select-Object Name, @{n='KB';e={[int]($_.Length/1KB)}}
 
     - name: Set version
       run: echo "VERSION=1.0.${{ github.run_number }}" >> $env:GITHUB_ENV

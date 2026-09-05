@@ -1,10 +1,14 @@
-// FFmpeg-based H264 encoder/decoder (replaces Windows Media Foundation implementation)
+// FFmpeg-based H264 encoder/decoder (replaces Windows Media Foundation implementation).
 // Works on all Windows editions including N/KN without Media Feature Pack.
-// Requires FFmpeg DLLs alongside the EXE: avcodec-61.dll, avutil-59.dll,
-// swscale-8.dll, swresample-5.dll (from BtbN GPL shared build).
+// Requires FFmpeg DLLs in the app's install folder (BtbN GPL shared build, win64).
+// DLLs must be present with their original versioned names, e.g. avcodec-63.dll,
+// avutil-59.dll, swscale-8.dll, swresample-5.dll.  Unversioned DLLs (avcodec.dll etc.)
+// also work as a fallback.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace JaTelei.Client.Services
@@ -14,29 +18,87 @@ namespace JaTelei.Client.Services
     // -----------------------------------------------------------------------
     internal static unsafe class Ffmpeg
     {
+        // Names used in [DllImport] — resolved by SetDllImportResolver below.
         const string AvCodec = "avcodec";
         const string AvUtil  = "avutil";
         const string SwScale = "swscale";
 
-        /// <summary>
-        /// Pre-load FFmpeg DLLs from the app's install directory before any P/Invoke.
-        /// Required for single-file publish: the EXE runs from a temp extraction folder,
-        /// so the OS loader won't find external DLLs unless we load them explicitly first.
-        /// </summary>
+        // ── Static constructor ───────────────────────────────────────────────
+        // Pre-loads the versioned FFmpeg DLLs from the install directory and
+        // registers a SetDllImportResolver so that P/Invoke calls for "avcodec",
+        // "avutil" and "swscale" are routed to the already-loaded handles.
+        //
+        // Why this is necessary:
+        //   • Single-file publish extracts the managed EXE to a temp folder;
+        //     AppContext.BaseDirectory still points to the real install folder.
+        //   • The FFmpeg DLLs carry VERSIONED internal names (avutil-59.dll etc.).
+        //     Renaming them to avutil.dll would break cross-DLL imports because
+        //     avcodec-63.dll internally references "avutil-59.dll" by name.
+        //     We must therefore keep the versioned filenames and resolve them here.
         static Ffmpeg()
         {
-            var appDir = AppContext.BaseDirectory;
-            // Load in dependency order: avutil first (no deps), then swresample and swscale
-            // (depend on avutil), then avcodec (depends on all three).
-            foreach (var dll in new[] { "avutil", "swresample", "swscale", "avcodec" })
+            var logPath = Path.Combine(Path.GetTempPath(), "jaclipei_ffmpeg.log");
+
+            try
             {
-                var path = Path.Combine(appDir, dll + ".dll");
-                if (File.Exists(path))
-                    NativeLibrary.Load(path);
+                var appDir = AppContext.BaseDirectory;
+                File.AppendAllText(logPath,
+                    $"[{DateTime.Now:HH:mm:ss}] Ffmpeg init — appDir={appDir}\n");
+
+                var handles = new Dictionary<string, IntPtr>(StringComparer.OrdinalIgnoreCase);
+
+                // Load order respects the dependency chain:
+                //   avutil  (no FFmpeg deps)
+                //   swresample (→ avutil)
+                //   swscale    (→ avutil)
+                //   avcodec    (→ avutil, swresample, swscale; includes libx264)
+                foreach (var prefix in new[] { "avutil", "swresample", "swscale", "avcodec" })
+                {
+                    // Prefer versioned names (avutil-59.dll) then unversioned (avutil.dll).
+                    var candidates = Directory.GetFiles(appDir, $"{prefix}-*.dll")
+                                              .Concat(Directory.GetFiles(appDir, $"{prefix}.dll"))
+                                              .ToArray();
+
+                    if (candidates.Length == 0)
+                    {
+                        File.AppendAllText(logPath,
+                            $"  WARNING: no DLL for '{prefix}' in {appDir}\n");
+                        continue;
+                    }
+
+                    var path = candidates[0];
+                    File.AppendAllText(logPath, $"  Loading {Path.GetFileName(path)} ...\n");
+
+                    // LoadLibraryEx with the full path; Windows resolves cross-DLL
+                    // dependencies by looking in the same directory first, so all the
+                    // av*/sw* DLLs in {app} will find each other automatically.
+                    var handle = NativeLibrary.Load(path);
+                    handles[prefix] = handle;
+
+                    File.AppendAllText(logPath,
+                        $"  OK  handle=0x{handle:X}\n");
+                }
+
+                // Route every [DllImport("avcodec"/"avutil"/"swscale"/"swresample")]
+                // to the already-loaded module handle.
+                NativeLibrary.SetDllImportResolver(
+                    typeof(Ffmpeg).Assembly,
+                    (libName, _, _) =>
+                        handles.TryGetValue(libName, out var h) ? h : IntPtr.Zero);
+
+                File.AppendAllText(logPath,
+                    $"[{DateTime.Now:HH:mm:ss}] Ffmpeg init complete\n");
+            }
+            catch (Exception ex)
+            {
+                // Write the full exception so it is visible even if no window appears.
+                File.AppendAllText(logPath,
+                    $"[{DateTime.Now:HH:mm:ss}] EXCEPTION in Ffmpeg static init:\n{ex}\n\n");
+                throw; // propagates as TypeInitializationException
             }
         }
 
-        // ---- avutil --------------------------------------------------------
+        // ── avutil ──────────────────────────────────────────────────────────
         [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
         public static extern AVFrame* av_frame_alloc();
 
@@ -68,7 +130,7 @@ namespace JaTelei.Client.Services
             return Marshal.PtrToStringAnsi((IntPtr)buf) ?? errnum.ToString();
         }
 
-        // ---- avcodec -------------------------------------------------------
+        // ── avcodec ─────────────────────────────────────────────────────────
         [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
         public static extern AVCodec* avcodec_find_encoder_by_name(byte* name);
 
@@ -105,7 +167,7 @@ namespace JaTelei.Client.Services
         [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
         public static extern int avcodec_receive_frame(AVCodecContext* avctx, AVFrame* frame);
 
-        // ---- swscale -------------------------------------------------------
+        // ── swscale ─────────────────────────────────────────────────────────
         [DllImport(SwScale, CallingConvention = CallingConvention.Cdecl)]
         public static extern SwsContext* sws_getContext(
             int srcW, int srcH, int srcFormat,
@@ -121,21 +183,17 @@ namespace JaTelei.Client.Services
         [DllImport(SwScale, CallingConvention = CallingConvention.Cdecl)]
         public static extern void sws_freeContext(SwsContext* swsContext);
 
-        // ---- AV pixel formats ----------------------------------------------
-        public const int AV_PIX_FMT_BGRA    = 28;
-        public const int AV_PIX_FMT_YUV420P = 0;
-
-        // ---- Codec IDs -----------------------------------------------------
-        public const uint AV_CODEC_ID_H264 = 27;
-
-        // ---- swscale flags -------------------------------------------------
-        public const int SWS_BILINEAR = 2;
+        // ── AV pixel formats / codec IDs / swscale flags ─────────────────────
+        public const int  AV_PIX_FMT_BGRA    = 28;
+        public const int  AV_PIX_FMT_YUV420P = 0;
+        public const uint AV_CODEC_ID_H264    = 27;
+        public const int  SWS_BILINEAR        = 2;
     }
 
     // -----------------------------------------------------------------------
     // Opaque FFmpeg structs — only fields we actually access are declared.
-    // AVFrame.data[] contains byte pointers; C# fixed buffers only support
-    // primitive types, so each pointer is an individual field.
+    // AVFrame.data[] holds byte pointers; C# fixed buffers don't support
+    // pointer types, so each pointer is a separate named field.
     // -----------------------------------------------------------------------
 #pragma warning disable CS0649
     [StructLayout(LayoutKind.Sequential)]
@@ -144,9 +202,6 @@ namespace JaTelei.Client.Services
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe struct AVCodecContext
     {
-        // We only need to set a handful of fields; the rest are accessed by
-        // name only at open time via avcodec_open2 and are opaque after that.
-        // Layout must match libavcodec exactly through the fields we use.
         public void*    av_class;
         public int      log_level_offset;
         public int      codec_type;
@@ -181,15 +236,10 @@ namespace JaTelei.Client.Services
     [StructLayout(LayoutKind.Sequential)]
     internal struct AVRational { public int num, den; }
 
-    /// <summary>
-    /// AVFrame — only the fields we read/write are listed.
-    /// data[0..7] are byte pointers; in C# fixed buffers can't hold pointer
-    /// types, so they are declared as individual named fields.
-    /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe struct AVFrame
     {
-        // data[0..7]
+        // data[0..7] — individual fields because fixed buffers can't hold pointer types
         public byte* data0;
         public byte* data1;
         public byte* data2;
@@ -198,7 +248,7 @@ namespace JaTelei.Client.Services
         public byte* data5;
         public byte* data6;
         public byte* data7;
-        // linesize[0..7]  — int is a valid fixed-buffer type
+        // linesize[0..7]
         public fixed int linesize[8];
         public byte**    extended_data;
         public int       width, height;
@@ -233,11 +283,10 @@ namespace JaTelei.Client.Services
 #pragma warning restore CS0649
 
     // -----------------------------------------------------------------------
-    // Small helper to build a 4-element plane/stride array on the stack
+    // Stack-allocated plane/stride arrays for YUV420P frames
     // -----------------------------------------------------------------------
     internal static unsafe class PlaneHelper
     {
-        /// <summary>Fill dst[0..3] with the four plane pointers of a YUV420P frame.</summary>
         public static void FillYuvPlanes(AVFrame* f, byte** dst)
         {
             dst[0] = f->data0;
@@ -257,7 +306,6 @@ namespace JaTelei.Client.Services
 
     // =======================================================================
     // MfH264Encoder — encodes BGRA frames to H264 Annex-B using libx264.
-    // Keeps the same public API as the original MF-based encoder.
     // =======================================================================
     public sealed unsafe class MfH264Encoder : IDisposable
     {
@@ -280,7 +328,7 @@ namespace JaTelei.Client.Services
             AVCodec* codec = Ffmpeg.avcodec_find_encoder_by_name(name);
             if (codec == null)
                 throw new InvalidOperationException(
-                    "FFmpeg libx264 encoder not found — ensure avcodec-61.dll is present.");
+                    "FFmpeg libx264 encoder not found — ensure avcodec DLL is present in the install folder.");
 
             _ctx = Ffmpeg.avcodec_alloc_context3(codec);
             if (_ctx == null)
@@ -323,7 +371,6 @@ namespace JaTelei.Client.Services
                 throw new InvalidOperationException("sws_getContext failed.");
         }
 
-        /// <summary>Encode one BGRA frame; returns Annex-B H264 bytes or null on error.</summary>
         public byte[]? Encode(byte[] bgra, int width, int height)
         {
             if (_disposed || bgra == null || bgra.Length == 0) return null;
@@ -377,9 +424,9 @@ namespace JaTelei.Client.Services
             if (_disposed) return;
             _disposed = true;
             if (_swsCtx != null) { Ffmpeg.sws_freeContext(_swsCtx); _swsCtx = null; }
-            if (_pkt    != null) { fixed (AVPacket** p = &_pkt) Ffmpeg.av_packet_free(p); _pkt = null; }
-            if (_frame  != null) { fixed (AVFrame**  f = &_frame) Ffmpeg.av_frame_free(f); _frame = null; }
-            if (_ctx    != null) { fixed (AVCodecContext** c = &_ctx) Ffmpeg.avcodec_free_context(c); _ctx = null; }
+            if (_pkt    != null) { fixed (AVPacket**       p = &_pkt)   Ffmpeg.av_packet_free(p);      _pkt   = null; }
+            if (_frame  != null) { fixed (AVFrame**        f = &_frame) Ffmpeg.av_frame_free(f);       _frame = null; }
+            if (_ctx    != null) { fixed (AVCodecContext** c = &_ctx)   Ffmpeg.avcodec_free_context(c); _ctx  = null; }
         }
 
         private static void WriteAscii(byte* buf, string s)
@@ -400,7 +447,6 @@ namespace JaTelei.Client.Services
 
     // =======================================================================
     // MfH264Decoder — decodes H264 Annex-B to BGRA using FFmpeg libavcodec.
-    // Keeps the same public API as the original MF-based decoder.
     // =======================================================================
     public sealed unsafe class MfH264Decoder : IDisposable
     {
@@ -416,7 +462,7 @@ namespace JaTelei.Client.Services
             AVCodec* codec = Ffmpeg.avcodec_find_decoder(Ffmpeg.AV_CODEC_ID_H264);
             if (codec == null)
                 throw new InvalidOperationException(
-                    "FFmpeg H264 decoder not found — ensure avcodec-61.dll is present.");
+                    "FFmpeg H264 decoder not found — ensure avcodec DLL is present in the install folder.");
 
             _ctx = Ffmpeg.avcodec_alloc_context3(codec);
             if (_ctx == null)
@@ -430,7 +476,6 @@ namespace JaTelei.Client.Services
             _pkt   = Ffmpeg.av_packet_alloc();
         }
 
-        /// <summary>Decode H264 Annex-B; returns (BGRA bytes, width, height) or (null,0,0).</summary>
         public (byte[]? bgra, int width, int height) Decode(byte[] h264, int width = 0, int height = 0)
         {
             if (_disposed || h264 == null || h264.Length == 0) return (null, 0, 0);
@@ -484,9 +529,9 @@ namespace JaTelei.Client.Services
             if (_disposed) return;
             _disposed = true;
             if (_swsCtx != null) { Ffmpeg.sws_freeContext(_swsCtx); _swsCtx = null; }
-            if (_pkt    != null) { fixed (AVPacket** p = &_pkt) Ffmpeg.av_packet_free(p); _pkt = null; }
-            if (_frame  != null) { fixed (AVFrame**  f = &_frame) Ffmpeg.av_frame_free(f); _frame = null; }
-            if (_ctx    != null) { fixed (AVCodecContext** c = &_ctx) Ffmpeg.avcodec_free_context(c); _ctx = null; }
+            if (_pkt    != null) { fixed (AVPacket**       p = &_pkt)   Ffmpeg.av_packet_free(p);      _pkt   = null; }
+            if (_frame  != null) { fixed (AVFrame**        f = &_frame) Ffmpeg.av_frame_free(f);       _frame = null; }
+            if (_ctx    != null) { fixed (AVCodecContext** c = &_ctx)   Ffmpeg.avcodec_free_context(c); _ctx  = null; }
         }
     }
 }
