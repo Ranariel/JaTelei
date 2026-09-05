@@ -131,16 +131,15 @@ namespace JaTelei.Client.Services
         }
 
         // ── av_opt (avutil) ─────────────────────────────────────────────────
-        // Used to set AVCodecContext fields without relying on the C# struct
-        // layout, which differs from the native layout across FFmpeg versions.
-        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
-        public static extern int av_opt_set_int(void* obj, byte* name, long val, int search_flags);
-
-        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
-        public static extern int av_opt_set_q(void* obj, byte* name, AVRational val, int search_flags);
-
+        // av_opt_set (string) is used for ALL parameters — it internally converts
+        // the string to the correct native type, avoiding calling-convention issues
+        // with av_opt_set_int (int64 alignment) and av_opt_set_q (struct by value).
         [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
         public static extern int av_opt_set(void* obj, byte* name, byte* val, int search_flags);
+
+        // Read back integer option value — used to verify options were set correctly.
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int av_opt_get_int(void* obj, byte* name, int search_flags, long* out_val);
 
         // ── avcodec ─────────────────────────────────────────────────────────
         [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
@@ -303,9 +302,20 @@ namespace JaTelei.Client.Services
 
         public MfH264Encoder(int width, int height, int fps = 30, int bitrateBps = 2_500_000)
         {
+            var logPath = Path.Combine(Path.GetTempPath(), "jaclipei_ffmpeg.log");
+
+            // libx264/yuv420p requires both dimensions to be multiples of 2.
+            if (width  % 2 != 0) width--;
+            if (height % 2 != 0) height--;
+            if (width  <= 0) width  = 2;
+            if (height <= 0) height = 2;
+
             _width  = width;
             _height = height;
             _fps    = fps > 0 ? fps : 30;
+
+            File.AppendAllText(logPath,
+                $"[{DateTime.Now:HH:mm:ss}] MfH264Encoder init {width}x{height} fps={_fps} bps={bitrateBps}\n");
 
             byte* name = stackalloc byte[16];
             WriteAscii(name, "libx264");
@@ -318,24 +328,31 @@ namespace JaTelei.Client.Services
             if (_ctx == null)
                 throw new InvalidOperationException("Failed to allocate AVCodecContext.");
 
-            // Set all codec parameters via av_opt to avoid struct layout issues
-            // (AVCodecContext layout varies between FFmpeg major versions).
-            AvOptSetInt(_ctx, "width",          width);
-            AvOptSetInt(_ctx, "height",         height);
-            AvOptSetStr(_ctx, "pixel_format",   "yuv420p");
-            AvOptSetInt(_ctx, "b",              bitrateBps);
-            AvOptSetQ  (_ctx, "time_base",      1, _fps);
-            AvOptSetQ  (_ctx, "framerate",      _fps, 1);
-            AvOptSetInt(_ctx, "g",              _fps * 2);
-            AvOptSetInt(_ctx, "bf",             0);
+            // Set ALL codec parameters via av_opt_set (string form).
+            // This is the safest approach across all FFmpeg versions: no struct layout
+            // assumptions, no calling-convention issues with int64 or struct-by-value.
+            // Each call is logged so the next run pinpoints any option that fails.
+            LogOpt(logPath, "width",          width.ToString());
+            LogOpt(logPath, "height",         height.ToString());
+            LogOpt(logPath, "pixel_format",   "yuv420p");
+            LogOpt(logPath, "b",              bitrateBps.ToString());
+            LogOpt(logPath, "time_base",      $"1/{_fps}");
+            LogOpt(logPath, "framerate",      $"{_fps}");
+            LogOpt(logPath, "g",              (_fps * 2).ToString());
+            LogOpt(logPath, "bf",             "0");
+
+            // Read back critical values to verify they were applied.
+            File.AppendAllText(logPath, $"  read-back width={ReadOpt("width")} height={ReadOpt("height")} pix_fmt={ReadOpt("pixel_format")}\n");
 
             AVDictionary* opts = null;
             SetDict(&opts, "preset",  "ultrafast");
             SetDict(&opts, "tune",    "zerolatency");
             SetDict(&opts, "profile", "baseline");
 
+            File.AppendAllText(logPath, $"  calling avcodec_open2...\n");
             int ret = Ffmpeg.avcodec_open2(_ctx, codec, &opts);
             Ffmpeg.av_dict_free(&opts);
+            File.AppendAllText(logPath, $"  avcodec_open2 → {ret} ({Ffmpeg.AvErrStr(ret)})\n");
             if (ret < 0)
                 throw new InvalidOperationException($"avcodec_open2: {Ffmpeg.AvErrStr(ret)}");
 
@@ -355,6 +372,25 @@ namespace JaTelei.Client.Services
                 Ffmpeg.SWS_BILINEAR, null, null, null);
             if (_swsCtx == null)
                 throw new InvalidOperationException("sws_getContext failed.");
+
+            File.AppendAllText(logPath, $"  MfH264Encoder ready\n");
+
+            // ── Helpers scoped to the constructor ───────────────────────────
+            void LogOpt(string lp, string optName, string optVal)
+            {
+                byte* k = stackalloc byte[64];  WriteAscii(k, optName);
+                byte* v = stackalloc byte[256]; WriteAscii(v, optVal);
+                int r = Ffmpeg.av_opt_set(_ctx, k, v, 0);
+                File.AppendAllText(lp, $"  av_opt_set {optName}={optVal} → {r} ({Ffmpeg.AvErrStr(r)})\n");
+            }
+
+            long ReadOpt(string optName)
+            {
+                byte* k = stackalloc byte[64]; WriteAscii(k, optName);
+                long v = -999;
+                Ffmpeg.av_opt_get_int(_ctx, k, 0, &v);
+                return v;
+            }
         }
 
         public byte[]? Encode(byte[] bgra, int width, int height)
@@ -418,25 +454,7 @@ namespace JaTelei.Client.Services
 
         public void ForceKeyframe() => _forceNextKeyframe = true;
 
-        // ── av_opt helpers ───────────────────────────────────────────────────
-        private static unsafe void AvOptSetInt(AVCodecContext* ctx, string name, long val)
-        {
-            byte* k = stackalloc byte[64]; WriteAscii(k, name);
-            Ffmpeg.av_opt_set_int(ctx, k, val, 0);
-        }
-
-        private static unsafe void AvOptSetQ(AVCodecContext* ctx, string name, int num, int den)
-        {
-            byte* k = stackalloc byte[64]; WriteAscii(k, name);
-            Ffmpeg.av_opt_set_q(ctx, k, new AVRational { num = num, den = den }, 0);
-        }
-
-        private static unsafe void AvOptSetStr(AVCodecContext* ctx, string name, string val)
-        {
-            byte* k = stackalloc byte[64]; WriteAscii(k, name);
-            byte* v = stackalloc byte[64]; WriteAscii(v, val);
-            Ffmpeg.av_opt_set(ctx, k, v, 0);
-        }
+        // (av_opt helpers are now inlined as local functions in the constructor)
 
         public void Dispose()
         {
