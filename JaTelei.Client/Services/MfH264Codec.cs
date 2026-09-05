@@ -4,6 +4,7 @@
 // swscale-8.dll, swresample-5.dll (from BtbN GPL shared build).
 
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 
 namespace JaTelei.Client.Services
@@ -16,6 +17,24 @@ namespace JaTelei.Client.Services
         const string AvCodec = "avcodec";
         const string AvUtil  = "avutil";
         const string SwScale = "swscale";
+
+        /// <summary>
+        /// Pre-load FFmpeg DLLs from the app's install directory before any P/Invoke.
+        /// Required for single-file publish: the EXE runs from a temp extraction folder,
+        /// so the OS loader won't find external DLLs unless we load them explicitly first.
+        /// </summary>
+        static Ffmpeg()
+        {
+            var appDir = AppContext.BaseDirectory;
+            // Load in dependency order: avutil first (no deps), then swresample and swscale
+            // (depend on avutil), then avcodec (depends on all three).
+            foreach (var dll in new[] { "avutil", "swresample", "swscale", "avcodec" })
+            {
+                var path = Path.Combine(appDir, dll + ".dll");
+                if (File.Exists(path))
+                    NativeLibrary.Load(path);
+            }
+        }
 
         // ---- avutil --------------------------------------------------------
         [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
