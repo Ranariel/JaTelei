@@ -311,11 +311,12 @@ namespace JaTelei.Client.Services
         {
             var logPath = Path.Combine(Path.GetTempPath(), "jaclipei_ffmpeg.log");
 
-            // libx264/yuv420p requires both dimensions to be multiples of 2.
-            if (width  % 2 != 0) width--;
-            if (height % 2 != 0) height--;
-            if (width  <= 0) width  = 2;
-            if (height <= 0) height = 2;
+            // libx264/yuv420p requires dimensions to be multiples of 2;
+            // align to 16 (macroblock size) to prevent bottom-row artifacts.
+            if (width  % 16 != 0) width  = (width  / 16) * 16;
+            if (height % 16 != 0) height = (height / 16) * 16;
+            if (width  <= 0) width  = 16;
+            if (height <= 0) height = 16;
 
             _width  = width;
             _height = height;
@@ -356,11 +357,13 @@ namespace JaTelei.Client.Services
             // Options that remain in the table (av_opt_set still works with SEARCH_CHILDREN):
             LogOpt(logPath, "b",         bitrateBps.ToString());
             LogOpt(logPath, "time_base", $"1/{_fps}");
-            LogOpt(logPath, "g",         (_fps * 4).ToString()); // GOP de 4s — menos hard-resets
+            LogOpt(logPath, "g",         _fps.ToString()); // keyframe a cada 1s — com intra-refresh off, fundo não fica stale
             LogOpt(logPath, "bf",        "0");
             // aq-mode=2 (variance AQ) distribui bits por variância local —
             // texto/borda recebe mais bits, áreas planas menos → menos pixelação em movimento
-            LogOpt(logPath, "x264-params", "aq-mode=2:aq-strength=0.8:me=umh");
+            // intra-refresh=0: desabilitar varredura top→bottom (causa do rodapé pixelado com zerolatency);
+            // me=hex: motion estimation rápida — umh é pesada demais para 60fps em software
+            LogOpt(logPath, "x264-params", "intra-refresh=0:aq-mode=1:me=hex:force-cfr=1");
 
             // Verify the direct writes landed correctly.
             File.AppendAllText(logPath,
