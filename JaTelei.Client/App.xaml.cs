@@ -1,3 +1,4 @@
+using System;
 using System.IO;
 using System.Reflection;
 using System.Windows;
@@ -13,11 +14,18 @@ public partial class App : Application
 
     public static IConfiguration Config { get; private set; } = null!;
 
+    static App()
+    {
+        // Register AppDomain handler BEFORE any other code runs so that
+        // TypeInitializationException (e.g. from FFmpeg static constructor)
+        // is caught and written to the log even if the WPF Dispatcher hasn't
+        // started yet.
+        AppDomain.CurrentDomain.UnhandledException += OnDomainException;
+    }
+
     public App()
     {
         // ── Configuração ──────────────────────────────────────────────────────
-        // Carrega appsettings.json (embutido na build) e, se presente,
-        // appsettings.local.json (gerado pelo CI a partir de secrets — gitignored).
         var assembly = Assembly.GetExecutingAssembly();
         using var defaultStream =
             assembly.GetManifestResourceStream("JaTelei.Client.appsettings.json")!;
@@ -33,20 +41,38 @@ public partial class App : Application
 
         Config = builder.Build();
 
-        // ── Tratamento de exceções globais ────────────────────────────────────
-        DispatcherUnhandledException += OnDispatcherException;
+        // ── Tratamento de exceções do Dispatcher e Tasks ───────────────────────
+        DispatcherUnhandledException    += OnDispatcherException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTask;
+    }
+
+    private static void OnDomainException(object sender, UnhandledExceptionEventArgs e)
+    {
+        try
+        {
+            File.AppendAllText(LogPath,
+                $"[Domain] {DateTime.Now}: isTerminating={e.IsTerminating}\n{e.ExceptionObject}\n\n");
+        }
+        catch { /* last-resort: ignore IO errors in the crash handler */ }
     }
 
     private static void OnDispatcherException(object sender, DispatcherUnhandledExceptionEventArgs e)
     {
-        File.AppendAllText(LogPath, $"[UI] {DateTime.Now}: {e.Exception}\n\n");
-        e.Handled = true; // evita crash, continua rodando
+        try
+        {
+            File.AppendAllText(LogPath, $"[UI] {DateTime.Now}: {e.Exception}\n\n");
+        }
+        catch { }
+        e.Handled = true;
     }
 
     private static void OnUnobservedTask(object? sender, UnobservedTaskExceptionEventArgs e)
     {
-        File.AppendAllText(LogPath, $"[Task] {DateTime.Now}: {e.Exception}\n\n");
+        try
+        {
+            File.AppendAllText(LogPath, $"[Task] {DateTime.Now}: {e.Exception}\n\n");
+        }
+        catch { }
         e.SetObserved();
     }
 }
