@@ -141,6 +141,13 @@ namespace JaTelei.Client.Services
         [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
         public static extern int av_opt_get_int(void* obj, byte* name, int search_flags, long* out_val);
 
+        // av_opt_set_int — fallback para campos inteiros (width, height, pix_fmt, etc.)
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int av_opt_set_int(void* obj, byte* name, long val, int search_flags);
+
+        // Busca recursiva em objetos filho (priv_data do codec).
+        public const int AV_OPT_SEARCH_CHILDREN = 1;
+
         // ── avcodec ─────────────────────────────────────────────────────────
         [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
         public static extern AVCodec* avcodec_find_encoder_by_name(byte* name);
@@ -328,21 +335,35 @@ namespace JaTelei.Client.Services
             if (_ctx == null)
                 throw new InvalidOperationException("Failed to allocate AVCodecContext.");
 
-            // Set ALL codec parameters via av_opt_set (string form).
-            // This is the safest approach across all FFmpeg versions: no struct layout
-            // assumptions, no calling-convention issues with int64 or struct-by-value.
-            // Each call is logged so the next run pinpoints any option that fails.
-            LogOpt(logPath, "width",          width.ToString());
-            LogOpt(logPath, "height",         height.ToString());
-            LogOpt(logPath, "pix_fmt",   "yuv420p");
-            LogOpt(logPath, "b",              bitrateBps.ToString());
-            LogOpt(logPath, "time_base",      $"1/{_fps}");
-            LogOpt(logPath, "framerate",      $"{_fps}");
-            LogOpt(logPath, "g",              (_fps * 2).ToString());
-            LogOpt(logPath, "bf",             "0");
+            // In FFmpeg 7.x (avcodec-63.dll) width, height, pix_fmt and framerate were
+            // removed from the AVCodecContext option table. av_opt_set returns
+            // AVERROR_OPTION_NOT_FOUND for all four, the fields stay at zero/default
+            // and avcodec_open2 returns EINVAL.
+            //
+            // Fix: write directly to the struct at offsets verified from avcodec.h of
+            // BtbN FFmpeg 7.x win64 build (avcodec-63.dll):
+            //   framerate.num +100, framerate.den +104
+            //   width +112, height +116, pix_fmt +136 (AV_PIX_FMT_YUV420P = 0)
+            byte* ctxBytes = (byte*)_ctx;
+            *(int*)(ctxBytes + 100) = _fps; // framerate.num
+            *(int*)(ctxBytes + 104) = 1;    // framerate.den
+            *(int*)(ctxBytes + 112) = width;  // width
+            *(int*)(ctxBytes + 116) = height; // height
+            *(int*)(ctxBytes + 136) = Ffmpeg.AV_PIX_FMT_YUV420P; // pix_fmt = 0
+            File.AppendAllText(logPath,
+                $"  direct: framerate={_fps}/1 width={width} height={height} pix_fmt=0(yuv420p)
+");
 
-            // Read back critical values to verify they were applied.
-            File.AppendAllText(logPath, $"  read-back width={ReadOpt("width")} height={ReadOpt("height")} pix_fmt={ReadOpt("pix_fmt")}\n");
+            // Options that remain in the table (av_opt_set still works with SEARCH_CHILDREN):
+            LogOpt(logPath, "b",         bitrateBps.ToString());
+            LogOpt(logPath, "time_base", $"1/{_fps}");
+            LogOpt(logPath, "g",         (_fps * 2).ToString());
+            LogOpt(logPath, "bf",        "0");
+
+            // Verify the direct writes landed correctly.
+            File.AppendAllText(logPath,
+                $"  verify: width={*(int*)(ctxBytes+112)} height={*(int*)(ctxBytes+116)} pix_fmt={*(int*)(ctxBytes+136)}
+");
 
             AVDictionary* opts = null;
             SetDict(&opts, "preset",  "ultrafast");
@@ -380,15 +401,31 @@ namespace JaTelei.Client.Services
             {
                 byte* k = stackalloc byte[64];  WriteAscii(k, optName);
                 byte* v = stackalloc byte[256]; WriteAscii(v, optVal);
-                int r = Ffmpeg.av_opt_set(_ctx, k, v, 0);
+                // Flag 1 = AV_OPT_SEARCH_CHILDREN: also searches codec priv_data.
+                int r = Ffmpeg.av_opt_set(_ctx, k, v, Ffmpeg.AV_OPT_SEARCH_CHILDREN);
                 File.AppendAllText(lp, $"  av_opt_set {optName}={optVal} → {r} ({Ffmpeg.AvErrStr(r)})\n");
+            }
+
+            void LogOptInt(string lp, string optName, long optVal)
+            {
+                byte* k = stackalloc byte[64]; WriteAscii(k, optName);
+                // Try av_opt_set_int (more direct than string conversion).
+                int r = Ffmpeg.av_opt_set_int(_ctx, k, optVal, Ffmpeg.AV_OPT_SEARCH_CHILDREN);
+                File.AppendAllText(lp, $"  av_opt_set_int {optName}={optVal} → {r} ({Ffmpeg.AvErrStr(r)})\n");
+                if (r != 0)
+                {
+                    // Fallback: string form (av_opt_set parses integers from decimal strings).
+                    byte* vs = stackalloc byte[64]; WriteAscii(vs, optVal.ToString());
+                    int r2 = Ffmpeg.av_opt_set(_ctx, k, vs, Ffmpeg.AV_OPT_SEARCH_CHILDREN);
+                    File.AppendAllText(lp, $"  av_opt_set {optName}={optVal} (fallback) → {r2} ({Ffmpeg.AvErrStr(r2)})\n");
+                }
             }
 
             long ReadOpt(string optName)
             {
                 byte* k = stackalloc byte[64]; WriteAscii(k, optName);
                 long v = -999;
-                Ffmpeg.av_opt_get_int(_ctx, k, 0, &v);
+                Ffmpeg.av_opt_get_int(_ctx, k, Ffmpeg.AV_OPT_SEARCH_CHILDREN, &v);
                 return v;
             }
         }
