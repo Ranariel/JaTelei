@@ -6,7 +6,7 @@ using JaTelei.Client.Services;
 
 namespace JaTelei.Client.ViewModels;
 
-public partial class FriendsViewModel(ApiService api, SignalingService signaling) : ObservableObject
+public partial class FriendsViewModel(ApiService api, SignalingService _) : ObservableObject
 {
     public ObservableCollection<Friend> Friends { get; } = [];
     public ObservableCollection<ApiService.PendingRequest> PendingRequests { get; } = [];

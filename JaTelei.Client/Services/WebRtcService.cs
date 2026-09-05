@@ -271,9 +271,7 @@ public class WebRtcService : IAsyncDisposable
         // Determine capture path:
         // - DLL path: monitor capture (DXGI DDup / WGC) OR window via WGC
         // - GDI fallback: only when DLL fails AND target is window/region
-        bool wantDll = true; // always try DLL first
-
-        Task.Run(async () =>
+        _ = Task.Run(async () =>
         {
             bool dllReady = false;
 
