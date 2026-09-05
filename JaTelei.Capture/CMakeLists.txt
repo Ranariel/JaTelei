@@ -29,6 +29,11 @@ if(MSVC)
         /EHsc             # exception handling
         /Zc:__cplusplus   # correct __cplusplus macro
     )
+
+    # Static CRT — bundles the runtime into the DLL so the user does not need
+    # to install Visual C++ Redistributable 2022.
+    set_property(TARGET JaTelei.Capture PROPERTY
+        MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endif()
 
 # Windows SDK / system libraries

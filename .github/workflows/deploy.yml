@@ -72,7 +72,7 @@ jobs:
         $dest = "publish"
         $copied = 0
 
-        # 1) Build output (bin/) — primary source when dotnet build extracted them
+        # 1) Build output — primary source when dotnet build extracted them
         Get-ChildItem "JaTelei.Client" -Recurse -ErrorAction SilentlyContinue |
           Where-Object { $_.Name -match "^(av|sw).+\.dll$" } |
           ForEach-Object {
@@ -81,7 +81,7 @@ jobs:
             $copied++
           }
 
-        # 2) Full NuGet cache — search all packages, any win-x64 subfolder
+        # 2) Full NuGet cache — any win-x64 subfolder in any package
         Get-ChildItem "$env:USERPROFILE\.nuget\packages" -Recurse -ErrorAction SilentlyContinue |
           Where-Object { $_.Name -match "^(av|sw).+\.dll$" -and $_.FullName -match "win.?x64|win64" } |
           ForEach-Object {
@@ -106,12 +106,14 @@ jobs:
 
     - name: Build Inno Setup installer
       run: |
-        $ffmpegArg = if ($env:HAS_FFMPEG -eq "1") { "/DHasFfmpeg=1" } else { "" }
-        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
-          /DMyAppVersion="${{ env.VERSION }}" `
-          /DMyExeName="JaTelei-${{ env.VERSION }}.exe" `
-          $ffmpegArg `
-          setup\JaTelei.iss
+        # Use array splat so no empty string is ever passed to ISCC
+        $isccArgs = @(
+          "/DMyAppVersion=${{ env.VERSION }}",
+          "/DMyExeName=JaTelei-${{ env.VERSION }}.exe",
+          "setup\JaTelei.iss"
+        )
+        if ($env:HAS_FFMPEG -eq "1") { $isccArgs = @("/DHasFfmpeg=1") + $isccArgs }
+        & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" @isccArgs
 
     - name: Upload installer artifact
       uses: actions/upload-artifact@v4
