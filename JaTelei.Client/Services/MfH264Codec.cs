@@ -364,9 +364,9 @@ namespace JaTelei.Client.Services
                 "  verify: width=" + *(int*)(ctxBytes+112) + " height=" + *(int*)(ctxBytes+116) + " pix_fmt=" + *(int*)(ctxBytes+136) + "\n");
 
             AVDictionary* opts = null;
-            SetDict(&opts, "preset",  "ultrafast");
+            SetDict(&opts, "preset",  "veryfast");
             SetDict(&opts, "tune",    "zerolatency");
-            SetDict(&opts, "profile", "baseline");
+            SetDict(&opts, "profile", "main");
 
             File.AppendAllText(logPath, $"  calling avcodec_open2...\n");
             int ret = Ffmpeg.avcodec_open2(_ctx, codec, &opts);
