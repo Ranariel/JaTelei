@@ -31,6 +31,8 @@ public class WebRtcService : IAsyncDisposable
 
     private int _framesRecv;
     private int _framesSent;
+    // Set by ICE "connected" when DLL path is unavailable; capture loop reads it to force IDR.
+    private volatile bool _forceGdiKeyframe;
 
     private static readonly string LogPath =
         Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
@@ -104,7 +106,8 @@ public class WebRtcService : IAsyncDisposable
             // are useless to the receiver (no SPS+PPS+IDR seen yet).
             if (state == RTCIceConnectionState.connected)
             {
-                ScreenCaptureService.ForceKeyframe();
+                ScreenCaptureService.ForceKeyframe(); // DLL path
+                _forceGdiKeyframe = true;             // GDI fallback path
                 File.AppendAllText(LogPath,
                     $"[Sender] {DateTime.Now}: ICE connected → ForceKeyframe()\n");
             }
@@ -333,6 +336,13 @@ public class WebRtcService : IAsyncDisposable
                                 raw = CaptureRegion(
                                     (int)bounds.X, (int)bounds.Y,
                                     (int)bounds.Width, (int)bounds.Height, out w, out h);
+                            else
+                            {
+                                // Primary monitor / no specific bounds — capture full primary screen
+                                int scrW = (int)System.Windows.SystemParameters.PrimaryScreenWidth;
+                                int scrH = (int)System.Windows.SystemParameters.PrimaryScreenHeight;
+                                raw = CaptureRegion(0, 0, scrW, scrH, out w, out h);
+                            }
 
                             if (raw != null && w > 0 && h > 0)
                             {
@@ -360,7 +370,14 @@ public class WebRtcService : IAsyncDisposable
                                         }
                                     }
                                     if (gdiEncoder != null)
+                                    {
+                                        if (_forceGdiKeyframe)
+                                        {
+                                            _forceGdiKeyframe = false;
+                                            gdiEncoder.ForceKeyframe();
+                                        }
                                         h264 = gdiEncoder.Encode(bgra, dstW, dstHH);
+                                    }
                                 }
                             }
                         }

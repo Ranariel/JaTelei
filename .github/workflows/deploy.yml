@@ -107,3 +107,11 @@ jobs:
         name: "JaTelei ${{ env.VERSION }}"
         files: installer/JaTeleiSetup-${{ env.VERSION }}.exe
         generate_release_notes: true
+
+    - name: Trigger VPS deploy
+      uses: appleboy/ssh-action@v1
+      with:
+        host: ${{ secrets.VPS_HOST }}
+        username: root
+        key: ${{ secrets.VPS_DEPLOY_KEY }}
+        script: /opt/screenshare/deploy.sh --version ${{ env.VERSION }}
