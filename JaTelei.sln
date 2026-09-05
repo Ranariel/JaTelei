@@ -1,22 +1,22 @@
 
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
-VisualStudioVersion = 17.0.0.0
-
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JaTelei.Client", "JaTelei.Client\JaTelei.Client.csproj", "{A1B2C3D4-0001-0001-0001-000000000001}"
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "JaTelei.Client", "JaTelei.Client\JaTelei.Client.csproj", "{C4A73A10-CCE8-4C3C-A363-A5E2A133AC6E}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "JaTelei.Capture", "JaTelei.Capture\JaTelei.Capture.vcxproj", "{A1B2C3D4-0002-0002-0002-000000000002}"
-EndProject
-
 Global
-    GlobalSection(SolutionConfigurationPlatforms) = preSolution
-        Debug|x64 = Debug|x64
-        Release|x64 = Release|x64
-    EndGlobalSection
-    GlobalSection(ProjectConfigurationPlatforms) = postSolution
-        {A1B2C3D4-0001-0001-0001-000000000001}.Debug|x64.ActiveCfg = Debug|x64
-        {A1B2C3D4-0001-0001-0001-000000000001}.Release|x64.ActiveCfg = Release|x64
-        {A1B2C3D4-0002-0002-0002-000000000002}.Debug|x64.ActiveCfg = Debug|x64
-        {A1B2C3D4-0002-0002-0002-000000000002}.Release|x64.ActiveCfg = Release|x64
-    EndGlobalSection
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|x64 = Debug|x64
+		Release|x64 = Release|x64
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{C4A73A10-CCE8-4C3C-A363-A5E2A133AC6E}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{C4A73A10-CCE8-4C3C-A363-A5E2A133AC6E}.Debug|x64.Build.0 = Debug|Any CPU
+		{C4A73A10-CCE8-4C3C-A363-A5E2A133AC6E}.Release|x64.ActiveCfg = Release|Any CPU
+		{C4A73A10-CCE8-4C3C-A363-A5E2A133AC6E}.Release|x64.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
 EndGlobal
