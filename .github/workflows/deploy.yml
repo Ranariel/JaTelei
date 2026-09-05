@@ -66,9 +66,47 @@ jobs:
           Copy-Item "JaTelei.Client/JaTelei.Capture.dll" -Destination "publish/"
         }
 
+    - name: Copy FFmpeg DLLs from NuGet cache
+      run: |
+        $nuget = "$env:USERPROFILE\.nuget\packages"
+        # SIPSorceryMedia.Windows stores FFmpeg in runtimes/win-x64/native
+        $sipsPkg = Get-ChildItem "$nuget\sipsorcerymedia.windows" -ErrorAction SilentlyContinue |
+                   Sort-Object Name -Descending | Select-Object -First 1
+        if ($sipsPkg) {
+          $native = Join-Path $sipsPkg.FullName "runtimes\win-x64\native"
+          if (Test-Path $native) {
+            Get-ChildItem $native -Filter "*.dll" | ForEach-Object {
+              Copy-Item $_.FullName -Destination "publish\" -Force
+              Write-Host "Copied FFmpeg DLL: $($_.Name)"
+            }
+          } else {
+            Write-Host "Native path not found: $native"
+          }
+        } else {
+          Write-Host "SIPSorceryMedia.Windows package not found in NuGet cache"
+        }
+        # Also check avcodec/avutil directly in case they land under a different package
+        @("ffmpeg.autogen", "sipsorcery") | ForEach-Object {
+          $pkg = Get-ChildItem "$nuget\$_" -ErrorAction SilentlyContinue |
+                 Sort-Object Name -Descending | Select-Object -First 1
+          if ($pkg) {
+            Get-ChildItem $pkg.FullName -Recurse -Filter "av*.dll" -ErrorAction SilentlyContinue |
+              Where-Object { $_.DirectoryName -match "win-x64" } | ForEach-Object {
+                Copy-Item $_.FullName -Destination "publish\" -Force
+                Write-Host "Copied: $($_.Name) from $_"
+              }
+            Get-ChildItem $pkg.FullName -Recurse -Filter "sw*.dll" -ErrorAction SilentlyContinue |
+              Where-Object { $_.DirectoryName -match "win-x64" } | ForEach-Object {
+                Copy-Item $_.FullName -Destination "publish\" -Force
+                Write-Host "Copied: $($_.Name) from $_"
+              }
+          }
+        }
+
     - name: List FFmpeg DLLs in publish (diagnostic)
       run: |
-        Get-ChildItem publish -Filter "*.dll" | Where-Object { $_.Name -match "^(av|sw)" } | ForEach-Object { Write-Host "  $($_.Name)" }
+        Write-Host "All DLLs in publish:"
+        Get-ChildItem publish -Filter "*.dll" | ForEach-Object { Write-Host "  $($_.Name)" }
 
     - name: Rename exe with version
       run: Rename-Item publish\JaTelei.exe "JaTelei-${{ env.VERSION }}.exe"
