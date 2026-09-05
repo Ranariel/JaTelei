@@ -334,7 +334,7 @@ namespace JaTelei.Client.Services
             // Each call is logged so the next run pinpoints any option that fails.
             LogOpt(logPath, "width",          width.ToString());
             LogOpt(logPath, "height",         height.ToString());
-            LogOpt(logPath, "pixel_format",   "yuv420p");
+            LogOpt(logPath, "pix_fmt",   "yuv420p");
             LogOpt(logPath, "b",              bitrateBps.ToString());
             LogOpt(logPath, "time_base",      $"1/{_fps}");
             LogOpt(logPath, "framerate",      $"{_fps}");
@@ -342,7 +342,7 @@ namespace JaTelei.Client.Services
             LogOpt(logPath, "bf",             "0");
 
             // Read back critical values to verify they were applied.
-            File.AppendAllText(logPath, $"  read-back width={ReadOpt("width")} height={ReadOpt("height")} pix_fmt={ReadOpt("pixel_format")}\n");
+            File.AppendAllText(logPath, $"  read-back width={ReadOpt("width")} height={ReadOpt("height")} pix_fmt={ReadOpt("pix_fmt")}\n");
 
             AVDictionary* opts = null;
             SetDict(&opts, "preset",  "ultrafast");
