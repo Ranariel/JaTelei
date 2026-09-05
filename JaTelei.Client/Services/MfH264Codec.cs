@@ -130,6 +130,18 @@ namespace JaTelei.Client.Services
             return Marshal.PtrToStringAnsi((IntPtr)buf) ?? errnum.ToString();
         }
 
+        // ── av_opt (avutil) ─────────────────────────────────────────────────
+        // Used to set AVCodecContext fields without relying on the C# struct
+        // layout, which differs from the native layout across FFmpeg versions.
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int av_opt_set_int(void* obj, byte* name, long val, int search_flags);
+
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int av_opt_set_q(void* obj, byte* name, AVRational val, int search_flags);
+
+        [DllImport(AvUtil, CallingConvention = CallingConvention.Cdecl)]
+        public static extern int av_opt_set(void* obj, byte* name, byte* val, int search_flags);
+
         // ── avcodec ─────────────────────────────────────────────────────────
         [DllImport(AvCodec, CallingConvention = CallingConvention.Cdecl)]
         public static extern AVCodec* avcodec_find_encoder_by_name(byte* name);
@@ -199,39 +211,10 @@ namespace JaTelei.Client.Services
     [StructLayout(LayoutKind.Sequential)]
     internal unsafe struct AVCodec { public byte* name; }
 
+    // AVCodecContext is treated as opaque — all fields are set via av_opt_set_*
+    // to stay correct across FFmpeg major versions (field layout changes between versions).
     [StructLayout(LayoutKind.Sequential)]
-    internal unsafe struct AVCodecContext
-    {
-        public void*    av_class;
-        public int      log_level_offset;
-        public int      codec_type;
-        public AVCodec* codec;
-        public uint     codec_id;
-        public uint     codec_tag;
-        public void*    priv_data;
-        public void*    @internal;
-        public void*    opaque;
-        public long     bit_rate;
-        public int      bit_rate_tolerance;
-        public int      global_quality;
-        public int      compression_level;
-        public int      flags;
-        public int      flags2;
-        public byte*    extradata;
-        public int      extradata_size;
-        public AVRational time_base;
-        public AVRational pkt_timebase;
-        public AVRational framerate;
-        public int      ticks_per_frame;
-        public int      delay;
-        public int      width, height;
-        public int      coded_width, coded_height;
-        public int      gop_size;
-        public int      pix_fmt;
-        public void*    draw_horiz_band;
-        public void*    get_format;
-        public int      max_b_frames;
-    }
+    internal unsafe struct AVCodecContext { public void* _placeholder; }
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct AVRational { public int num, den; }
@@ -335,14 +318,16 @@ namespace JaTelei.Client.Services
             if (_ctx == null)
                 throw new InvalidOperationException("Failed to allocate AVCodecContext.");
 
-            _ctx->width       = width;
-            _ctx->height      = height;
-            _ctx->pix_fmt     = Ffmpeg.AV_PIX_FMT_YUV420P;
-            _ctx->bit_rate    = bitrateBps;
-            _ctx->time_base   = new AVRational { num = 1, den = _fps };
-            _ctx->framerate   = new AVRational { num = _fps, den = 1 };
-            _ctx->gop_size    = _fps * 2;
-            _ctx->max_b_frames = 0;
+            // Set all codec parameters via av_opt to avoid struct layout issues
+            // (AVCodecContext layout varies between FFmpeg major versions).
+            AvOptSetInt(_ctx, "width",          width);
+            AvOptSetInt(_ctx, "height",         height);
+            AvOptSetStr(_ctx, "pixel_format",   "yuv420p");
+            AvOptSetInt(_ctx, "b",              bitrateBps);
+            AvOptSetQ  (_ctx, "time_base",      1, _fps);
+            AvOptSetQ  (_ctx, "framerate",      _fps, 1);
+            AvOptSetInt(_ctx, "g",              _fps * 2);
+            AvOptSetInt(_ctx, "bf",             0);
 
             AVDictionary* opts = null;
             SetDict(&opts, "preset",  "ultrafast");
@@ -378,11 +363,12 @@ namespace JaTelei.Client.Services
 
             if (width != _width || height != _height)
             {
+                // Resolution change: recreate the sws scaler.
+                // The codec context is NOT updated here — callers (WebRtcService)
+                // recreate MfH264Encoder when dimensions change.
                 Ffmpeg.sws_freeContext(_swsCtx);
                 _width  = width;
                 _height = height;
-                _ctx->width  = width;
-                _ctx->height = height;
                 _frame->width  = width;
                 _frame->height = height;
                 _swsCtx = Ffmpeg.sws_getContext(
@@ -431,6 +417,26 @@ namespace JaTelei.Client.Services
         }
 
         public void ForceKeyframe() => _forceNextKeyframe = true;
+
+        // ── av_opt helpers ───────────────────────────────────────────────────
+        private static unsafe void AvOptSetInt(AVCodecContext* ctx, string name, long val)
+        {
+            byte* k = stackalloc byte[64]; WriteAscii(k, name);
+            Ffmpeg.av_opt_set_int(ctx, k, val, 0);
+        }
+
+        private static unsafe void AvOptSetQ(AVCodecContext* ctx, string name, int num, int den)
+        {
+            byte* k = stackalloc byte[64]; WriteAscii(k, name);
+            Ffmpeg.av_opt_set_q(ctx, k, new AVRational { num = num, den = den }, 0);
+        }
+
+        private static unsafe void AvOptSetStr(AVCodecContext* ctx, string name, string val)
+        {
+            byte* k = stackalloc byte[64]; WriteAscii(k, name);
+            byte* v = stackalloc byte[64]; WriteAscii(v, val);
+            Ffmpeg.av_opt_set(ctx, k, v, 0);
+        }
 
         public void Dispose()
         {
