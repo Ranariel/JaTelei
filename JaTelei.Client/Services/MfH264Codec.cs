@@ -356,8 +356,11 @@ namespace JaTelei.Client.Services
             // Options that remain in the table (av_opt_set still works with SEARCH_CHILDREN):
             LogOpt(logPath, "b",         bitrateBps.ToString());
             LogOpt(logPath, "time_base", $"1/{_fps}");
-            LogOpt(logPath, "g",         (_fps * 2).ToString());
+            LogOpt(logPath, "g",         (_fps * 4).ToString()); // GOP de 4s — menos hard-resets
             LogOpt(logPath, "bf",        "0");
+            // aq-mode=2 (variance AQ) distribui bits por variância local —
+            // texto/borda recebe mais bits, áreas planas menos → menos pixelação em movimento
+            LogOpt(logPath, "x264-params", "aq-mode=2:aq-strength=0.8:me=umh");
 
             // Verify the direct writes landed correctly.
             File.AppendAllText(logPath,

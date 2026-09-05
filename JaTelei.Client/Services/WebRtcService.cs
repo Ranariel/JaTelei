@@ -258,8 +258,12 @@ public class WebRtcService : IAsyncDisposable
         var token = _cts.Token;
 
         int effectiveFps = target?.Fps > 0 ? target.Fps : fps;
-        int bitrateKbps  = 8_000;
         int targetHeight = target?.ResolutionHeight ?? 0;
+        // Bitrate adaptivo: ~0,10 bits/pixel/frame, clamped [2–20 Mbps]
+        int bitrateKbps  = ComputeBitrateKbps(
+            targetHeight > 0 ? targetHeight * 16 / 9 : 1920,
+            targetHeight > 0 ? targetHeight           : 1080,
+            effectiveFps);
 
         uint rtpDuration = (uint)(90_000.0 / effectiveFps);
         var  delay       = TimeSpan.FromMilliseconds(1000.0 / effectiveFps);
@@ -357,8 +361,9 @@ public class WebRtcService : IAsyncDisposable
                                         gdiEncoder = null;
                                         try
                                         {
+                                            int gdiBps = ComputeBitrateKbps(dstW, dstHH, effectiveFps) * 1000;
                                             gdiEncoder = new MfH264Encoder(dstW, dstHH,
-                                                                           effectiveFps, bitrateKbps * 1000);
+                                                                           effectiveFps, gdiBps);
                                             encW = dstW; encH = dstHH;
                                         }
                                         catch (Exception ex)
@@ -481,6 +486,18 @@ public class WebRtcService : IAsyncDisposable
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Bitrate adaptivo para screen sharing: 0,10 bits/pixel/frame,
+    /// clamped entre 2 Mbps e 20 Mbps.
+    /// Ex: 1080p@30 → 6,2 Mbps | 1080p@60 → 12,4 Mbps | 720p@30 → 2,8 Mbps
+    /// </summary>
+    private static int ComputeBitrateKbps(int w, int h, int fps)
+    {
+        long bps = (long)w * h * fps / 10; // 0,10 bits/pixel/frame
+        return (int)Math.Clamp(bps / 1000, 2_000, 20_000);
+    }
+
 
     private static string ExtractCandType(string j)
     {
