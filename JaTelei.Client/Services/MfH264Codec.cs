@@ -316,6 +316,7 @@ namespace JaTelei.Client.Services
         private int             _width, _height, _fps;
         private long            _pts;
         private bool            _disposed;
+        private bool            _forceNextKeyframe;
 
         public MfH264Encoder(int width, int height, int fps = 30, int bitrateBps = 2_500_000)
         {
@@ -409,6 +410,16 @@ namespace JaTelei.Client.Services
 
             _frame->pts = _pts++;
 
+            if (_forceNextKeyframe)
+            {
+                _forceNextKeyframe = false;
+                _frame->pict_type = 1; // AV_PICTURE_TYPE_I — forces IDR
+            }
+            else
+            {
+                _frame->pict_type = 0; // AV_PICTURE_TYPE_NONE — let encoder decide
+            }
+
             if (Ffmpeg.avcodec_send_frame(_ctx, _frame) < 0) return null;
             int ret = Ffmpeg.avcodec_receive_packet(_ctx, _pkt);
             if (ret < 0) { Ffmpeg.av_packet_unref(_pkt); return null; }
@@ -418,6 +429,8 @@ namespace JaTelei.Client.Services
             Ffmpeg.av_packet_unref(_pkt);
             return output;
         }
+
+        public void ForceKeyframe() => _forceNextKeyframe = true;
 
         public void Dispose()
         {
