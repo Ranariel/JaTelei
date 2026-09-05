@@ -206,6 +206,7 @@ namespace JaTelei.Client.Services
         public const int  AV_PIX_FMT_YUV420P = 0;
         public const uint AV_CODEC_ID_H264    = 27;
         public const int  SWS_BILINEAR        = 2;
+        public const int  SWS_ACCURATE_RND    = 0x40000;
     }
 
     // -----------------------------------------------------------------------
@@ -303,6 +304,7 @@ namespace JaTelei.Client.Services
         private AVPacket*       _pkt;
         private SwsContext*     _swsCtx;
         private int             _width, _height, _fps;
+        private int             _srcW,  _srcH;  // dimensões do BGRA de entrada (podem diferir de _width/_height)
         private long            _pts;
         private bool            _disposed;
         private bool            _forceNextKeyframe;
@@ -391,12 +393,9 @@ namespace JaTelei.Client.Services
 
             _pkt = Ffmpeg.av_packet_alloc();
 
-            _swsCtx = Ffmpeg.sws_getContext(
-                width, height, Ffmpeg.AV_PIX_FMT_BGRA,
-                width, height, Ffmpeg.AV_PIX_FMT_YUV420P,
-                Ffmpeg.SWS_BILINEAR, null, null, null);
-            if (_swsCtx == null)
-                throw new InvalidOperationException("sws_getContext failed.");
+            // sws context criado lazily no primeiro Encode (src pode ter resolução maior).
+            // _srcW/_srcH = 0 sinaliza "não criado ainda".
+            _srcW = 0; _srcH = 0; _swsCtx = null;
 
             File.AppendAllText(logPath, $"  MfH264Encoder ready\n");
 
@@ -417,20 +416,18 @@ namespace JaTelei.Client.Services
         {
             if (_disposed || bgra == null || bgra.Length == 0) return null;
 
-            if (width != _width || height != _height)
+            // Recriar sws context se a resolução de entrada (captura) mudou.
+            // A resolução de SAÍDA (_width×_height) é fixa no construtor;
+            // sws_scale faz a escala src→enc em um único passo SIMD (evita GDI+ na chamada).
+            if (width != _srcW || height != _srcH)
             {
-                // Resolution change: recreate the sws scaler.
-                // The codec context is NOT updated here — callers (WebRtcService)
-                // recreate MfH264Encoder when dimensions change.
-                Ffmpeg.sws_freeContext(_swsCtx);
-                _width  = width;
-                _height = height;
-                _frame->width  = width;
-                _frame->height = height;
+                if (_swsCtx != null) Ffmpeg.sws_freeContext(_swsCtx);
+                _srcW = width; _srcH = height;
                 _swsCtx = Ffmpeg.sws_getContext(
-                    width, height, Ffmpeg.AV_PIX_FMT_BGRA,
-                    width, height, Ffmpeg.AV_PIX_FMT_YUV420P,
-                    Ffmpeg.SWS_BILINEAR, null, null, null);
+                    width,   height,   Ffmpeg.AV_PIX_FMT_BGRA,
+                    _width,  _height,  Ffmpeg.AV_PIX_FMT_YUV420P,
+                    Ffmpeg.SWS_BILINEAR | Ffmpeg.SWS_ACCURATE_RND, null, null, null);
+                if (_swsCtx == null) return null;
             }
 
             if (Ffmpeg.av_frame_make_writable(_frame) < 0) return null;
