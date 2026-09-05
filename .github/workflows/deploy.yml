@@ -66,46 +66,39 @@ jobs:
           Copy-Item "JaTelei.Client/JaTelei.Capture.dll" -Destination "publish/"
         }
 
-    - name: Copy FFmpeg DLLs from NuGet cache
+    - name: Copy FFmpeg DLLs into publish folder
+      id: ffmpeg
       run: |
-        $nuget = "$env:USERPROFILE\.nuget\packages"
-        # SIPSorceryMedia.Windows stores FFmpeg in runtimes/win-x64/native
-        $sipsPkg = Get-ChildItem "$nuget\sipsorcerymedia.windows" -ErrorAction SilentlyContinue |
-                   Sort-Object Name -Descending | Select-Object -First 1
-        if ($sipsPkg) {
-          $native = Join-Path $sipsPkg.FullName "runtimes\win-x64\native"
-          if (Test-Path $native) {
-            Get-ChildItem $native -Filter "*.dll" | ForEach-Object {
-              Copy-Item $_.FullName -Destination "publish\" -Force
-              Write-Host "Copied FFmpeg DLL: $($_.Name)"
-            }
-          } else {
-            Write-Host "Native path not found: $native"
+        $dest = "publish"
+        $copied = 0
+
+        # 1) Build output (bin/) — primary source when dotnet build extracted them
+        Get-ChildItem "JaTelei.Client" -Recurse -ErrorAction SilentlyContinue |
+          Where-Object { $_.Name -match "^(av|sw).+\.dll$" } |
+          ForEach-Object {
+            Copy-Item $_.FullName -Destination $dest -Force
+            Write-Host "bin: $($_.Name)"
+            $copied++
           }
+
+        # 2) Full NuGet cache — search all packages, any win-x64 subfolder
+        Get-ChildItem "$env:USERPROFILE\.nuget\packages" -Recurse -ErrorAction SilentlyContinue |
+          Where-Object { $_.Name -match "^(av|sw).+\.dll$" -and $_.FullName -match "win.?x64|win64" } |
+          ForEach-Object {
+            Copy-Item $_.FullName -Destination $dest -Force
+            Write-Host "nuget: $($_.Name)  [$($_.DirectoryName)]"
+            $copied++
+          }
+
+        Write-Host "FFmpeg DLLs copied: $copied"
+        if ($copied -gt 0) {
+          echo "HAS_FFMPEG=1" >> $env:GITHUB_ENV
         } else {
-          Write-Host "SIPSorceryMedia.Windows package not found in NuGet cache"
-        }
-        # Also check avcodec/avutil directly in case they land under a different package
-        @("ffmpeg.autogen", "sipsorcery") | ForEach-Object {
-          $pkg = Get-ChildItem "$nuget\$_" -ErrorAction SilentlyContinue |
-                 Sort-Object Name -Descending | Select-Object -First 1
-          if ($pkg) {
-            Get-ChildItem $pkg.FullName -Recurse -Filter "av*.dll" -ErrorAction SilentlyContinue |
-              Where-Object { $_.DirectoryName -match "win-x64" } | ForEach-Object {
-                Copy-Item $_.FullName -Destination "publish\" -Force
-                Write-Host "Copied: $($_.Name) from $_"
-              }
-            Get-ChildItem $pkg.FullName -Recurse -Filter "sw*.dll" -ErrorAction SilentlyContinue |
-              Where-Object { $_.DirectoryName -match "win-x64" } | ForEach-Object {
-                Copy-Item $_.FullName -Destination "publish\" -Force
-                Write-Host "Copied: $($_.Name) from $_"
-              }
-          }
+          Write-Host "WARNING: No FFmpeg DLLs found — installer will ship without them"
         }
 
-    - name: List FFmpeg DLLs in publish (diagnostic)
+    - name: List all DLLs in publish (diagnostic)
       run: |
-        Write-Host "All DLLs in publish:"
         Get-ChildItem publish -Filter "*.dll" | ForEach-Object { Write-Host "  $($_.Name)" }
 
     - name: Rename exe with version
@@ -113,9 +106,11 @@ jobs:
 
     - name: Build Inno Setup installer
       run: |
+        $ffmpegArg = if ($env:HAS_FFMPEG -eq "1") { "/DHasFfmpeg=1" } else { "" }
         & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
           /DMyAppVersion="${{ env.VERSION }}" `
           /DMyExeName="JaTelei-${{ env.VERSION }}.exe" `
+          $ffmpegArg `
           setup\JaTelei.iss
 
     - name: Upload installer artifact

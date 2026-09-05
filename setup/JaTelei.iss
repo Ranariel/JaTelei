@@ -41,11 +41,11 @@ Name: "desktopicon"; Description: "Criar ícone na Área de Trabalho"; GroupDesc
 [Files]
 Source: "..\publish\{#MyExeName}"; DestDir: "{app}"; DestName: "JaTelei.exe"; Flags: ignoreversion
 Source: "..\publish\JaTelei.Capture.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
-; FFmpeg DLLs — versioned names must be preserved so DLLs resolve each other correctly.
-; avcodec-63.dll imports avutil-59.dll by that exact name; renaming breaks the loader.
-; The static constructor in MfH264Codec.cs handles mapping via NativeLibrary.SetDllImportResolver.
-Source: "..\publish\av*.dll"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\publish\sw*.dll"; DestDir: "{app}"; Flags: ignoreversion
+; FFmpeg shared libs — only included when present (CI passes /DHasFfmpeg when it finds them)
+#ifdef HasFfmpeg
+Source: "..\publish\av*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+Source: "..\publish\sw*.dll"; DestDir: "{app}"; Flags: ignoreversion skipifsourcedoesntexist
+#endif
 
 [Icons]
 Name: "{group}\Ja Telei";             Filename: "{app}\JaTelei.exe"
