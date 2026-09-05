@@ -8,9 +8,8 @@ on:
 jobs:
   build:
     runs-on: windows-latest
-    permissions:
-      contents: write
-
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     steps:
     - uses: actions/checkout@v4
 
@@ -36,32 +35,12 @@ jobs:
         cmake -B JaTelei.Capture/build -S JaTelei.Capture -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
         cmake --build JaTelei.Capture/build
 
-    - name: Download FFmpeg DLLs (GPL shared, win64)
-      run: |
-        $url = "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl-shared.zip"
-        Invoke-WebRequest -Uri $url -OutFile ffmpeg.zip
-        Expand-Archive ffmpeg.zip -DestinationPath ffmpeg_tmp
-
-        # Find the bin directory (structure may vary between releases)
-        $binDir = Get-ChildItem ffmpeg_tmp -Recurse -Directory | Where-Object { $_.Name -eq "bin" } | Select-Object -First 1
-        if (-not $binDir) { Write-Error "FFmpeg bin/ not found in zip"; exit 1 }
-        Write-Host "FFmpeg bin: $($binDir.FullName)"
-
-        New-Item -ItemType Directory -Force -Path ffmpeg_dlls | Out-Null
-
-        # Copy ALL av*/sw* DLLs with their ORIGINAL VERSIONED names.
-        # Do NOT rename them — avcodec-63.dll internally imports "avutil-59.dll" by
-        # that exact name, so renaming would break the Windows loader dependency chain.
-        Get-ChildItem $binDir.FullName -Filter "*.dll" | Where-Object { $_.Name -match "^(av|sw)" } | ForEach-Object {
-          Copy-Item $_.FullName (Join-Path "ffmpeg_dlls" $_.Name)
-          Write-Host "Copied $($_.Name)"
-        }
-
-        Write-Host "FFmpeg DLLs to be bundled:"
-        Get-ChildItem ffmpeg_dlls -Filter "*.dll" | Select-Object Name, @{n='KB';e={[int]($_.Length/1KB)}}
-
     - name: Set version
-      run: echo "VERSION=1.0.${{ github.run_number }}" >> $env:GITHUB_ENV
+      id: version
+      run: |
+        $v = "1.0.${{ github.run_number }}"
+        echo "VERSION=$v" >> $env:GITHUB_ENV
+        echo "version=$v" >> $env:GITHUB_OUTPUT
 
     - name: Patch AppVersion.cs
       run: |
@@ -87,8 +66,9 @@ jobs:
           Copy-Item "JaTelei.Client/JaTelei.Capture.dll" -Destination "publish/"
         }
 
-    - name: Copy FFmpeg DLLs into publish folder
-      run: Copy-Item ffmpeg_dlls\*.dll -Destination publish\
+    - name: List FFmpeg DLLs in publish (diagnostic)
+      run: |
+        Get-ChildItem publish -Filter "*.dll" | Where-Object { $_.Name -match "^(av|sw)" } | ForEach-Object { Write-Host "  $($_.Name)" }
 
     - name: Rename exe with version
       run: Rename-Item publish\JaTelei.exe "JaTelei-${{ env.VERSION }}.exe"
@@ -100,18 +80,34 @@ jobs:
           /DMyExeName="JaTelei-${{ env.VERSION }}.exe" `
           setup\JaTelei.iss
 
+    - name: Upload installer artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: JaTelei
+        path: installer/JaTeleiSetup-${{ env.VERSION }}.exe
+        retention-days: 7
+
     - name: Create GitHub Release
       uses: softprops/action-gh-release@v2
       with:
         tag_name: v${{ env.VERSION }}
-        name: "JaTelei ${{ env.VERSION }}"
+        name: JaTelei v${{ env.VERSION }}
         files: installer/JaTeleiSetup-${{ env.VERSION }}.exe
-        generate_release_notes: true
+        generate_release_notes: false
+        body: |
+          Versão ${{ env.VERSION }} — build automático.
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    steps:
     - name: Trigger VPS deploy
       uses: appleboy/ssh-action@v1
       with:
         host: ${{ secrets.VPS_HOST }}
         username: root
         key: ${{ secrets.VPS_DEPLOY_KEY }}
-        script: /opt/screenshare/deploy.sh --version ${{ env.VERSION }}
+        script: /opt/screenshare/deploy.sh --version ${{ needs.build.outputs.version }}
