@@ -144,5 +144,5 @@ jobs:
       with:
         host: ${{ secrets.VPS_HOST }}
         username: root
-        key: ${{ secrets.VPS_DEPLOY_KEY }}
+        key: ${{ secrets.VPS_SSH_KEY }}
         script: /opt/screenshare/deploy.sh --version ${{ needs.build.outputs.version }}
