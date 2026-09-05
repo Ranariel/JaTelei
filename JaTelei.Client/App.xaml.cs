@@ -16,33 +16,46 @@ public partial class App : Application
 
     static App()
     {
-        // Register AppDomain handler BEFORE any other code runs so that
-        // TypeInitializationException (e.g. from FFmpeg static constructor)
-        // is caught and written to the log even if the WPF Dispatcher hasn't
-        // started yet.
+        // AppDomain handler registrado ANTES de qualquer outro código para capturar
+        // TypeInitializationException e outros crashes pré-Dispatcher no log.
         AppDomain.CurrentDomain.UnhandledException += OnDomainException;
     }
 
     public App()
     {
         // ── Configuração ──────────────────────────────────────────────────────
+        // IMPORTANTE: AddJsonStream() armazena a referência do stream e só lê
+        // durante Build(). Por isso os streams NÃO podem estar em using blocks
+        // que terminem antes de Build() — usamos MemoryStream para garantir que
+        // os dados estejam em memória gerenciada e não sejam descartados cedo.
         var assembly = Assembly.GetExecutingAssembly();
-        using var defaultStream =
-            assembly.GetManifestResourceStream("JaTelei.Client.appsettings.json")!;
 
-        var builder = new ConfigurationBuilder().AddJsonStream(defaultStream);
+        var builder = new ConfigurationBuilder();
 
+        // appsettings.json (embutido na build)
+        using (var raw = assembly.GetManifestResourceStream("JaTelei.Client.appsettings.json")!)
+        {
+            var ms = new MemoryStream();
+            raw.CopyTo(ms);
+            ms.Position = 0;
+            builder.AddJsonStream(ms);
+        }
+
+        // appsettings.local.json (gerado pelo CI a partir dos secrets — gitignored)
         const string localResource = "JaTelei.Client.appsettings.local.json";
         if (assembly.GetManifestResourceNames().Contains(localResource))
         {
-            using var localStream = assembly.GetManifestResourceStream(localResource)!;
-            builder.AddJsonStream(localStream);
+            using var raw = assembly.GetManifestResourceStream(localResource)!;
+            var ms = new MemoryStream();
+            raw.CopyTo(ms);
+            ms.Position = 0;
+            builder.AddJsonStream(ms);
         }
 
         Config = builder.Build();
 
         // ── Tratamento de exceções do Dispatcher e Tasks ───────────────────────
-        DispatcherUnhandledException    += OnDispatcherException;
+        DispatcherUnhandledException          += OnDispatcherException;
         TaskScheduler.UnobservedTaskException += OnUnobservedTask;
     }
 
@@ -53,7 +66,7 @@ public partial class App : Application
             File.AppendAllText(LogPath,
                 $"[Domain] {DateTime.Now}: isTerminating={e.IsTerminating}\n{e.ExceptionObject}\n\n");
         }
-        catch { /* last-resort: ignore IO errors in the crash handler */ }
+        catch { }
     }
 
     private static void OnDispatcherException(object sender, DispatcherUnhandledExceptionEventArgs e)
