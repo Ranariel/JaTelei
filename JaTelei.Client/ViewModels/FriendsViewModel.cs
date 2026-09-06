@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Windows.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using JaTelei.Client.Models;
@@ -14,8 +15,16 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     [ObservableProperty] private string _addUsername = string.Empty;
     [ObservableProperty] private string _statusMessage = string.Empty;
     [ObservableProperty] private Friend? _selectedFriend;
+    [ObservableProperty] private bool _isSharing;
+    [ObservableProperty] private BitmapSource? _selfPreviewImage;
+
+    /// <summary>Inverse of IsSharing — used in XAML visibility bindings.</summary>
+    public bool IsNotSharing => !IsSharing;
+
+    partial void OnIsSharingChanged(bool value) => OnPropertyChanged(nameof(IsNotSharing));
 
     public event Action<Friend>? StartShareRequested;
+    public event Action?         StopShareRequested;
 
     [RelayCommand]
     public async Task LoadAsync()
@@ -49,4 +58,11 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
         if (SelectedFriend is null) return;
         StartShareRequested?.Invoke(SelectedFriend);
     }
+
+    [RelayCommand]
+    private void StopShare() => StopShareRequested?.Invoke();
+
+    public void OnSharingStarted()  => IsSharing = true;
+    public void OnSharingStopped()  { IsSharing = false; SelfPreviewImage = null; }
+    public void OnPreviewFrame(BitmapSource img) => SelfPreviewImage = img;
 }

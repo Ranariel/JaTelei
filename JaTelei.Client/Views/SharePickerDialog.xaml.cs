@@ -34,8 +34,6 @@ public partial class SharePickerDialog : Window
     private static readonly IReadOnlyList<ResOption> Resolutions = new[]
     {
         new ResOption("Nativa  (sem redimensionamento)", 0),
-        new ResOption("2160p - 4K",                     2160),
-        new ResOption("1440p - 2K",                     1440),
         new ResOption("1080p - Full HD",                1080),
         new ResOption("720p - HD  (Recomendado)",       720),
         new ResOption("480p - SD",                      480),
@@ -64,7 +62,7 @@ public partial class SharePickerDialog : Window
         MaxHeight = workArea.Height * 0.90;
 
         CboResolution.ItemsSource   = Resolutions;
-        CboResolution.SelectedIndex = 4;   // 720p por padrao
+        CboResolution.SelectedIndex = 2;   // 720p por padrao
 
         // Cancela capture de prévia ao fechar a janela para evitar leak
         Closed += (_, _) =>
@@ -147,7 +145,6 @@ public partial class SharePickerDialog : Window
 
         BtnFps30.Style  = fps == 30  ? (Style)Resources["FpsBtnSelected"] : (Style)Resources["FpsBtn"];
         BtnFps60.Style  = fps == 60  ? (Style)Resources["FpsBtnSelected"] : (Style)Resources["FpsBtn"];
-        BtnFps120.Style = fps == 120 ? (Style)Resources["FpsBtnSelected"] : (Style)Resources["FpsBtn"];
     }
 
     // Helpers
