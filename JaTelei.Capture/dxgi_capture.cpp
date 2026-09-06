@@ -603,6 +603,23 @@ static HRESULT InitEncoder(EngineState* e)
             VARIANT vqp; VariantInit(&vqp);
             vqp.vt = VT_UI8; vqp.ullVal = 35;
             ca->SetValue(&CODECAPI_AVEncVideoEncodeQP, &vqp);  // hint, not hard cap on all HW
+
+            // CBR (Constant Bit Rate) — encoder distributes bits uniformly across every
+            // row of every frame. Without this (default VBR), the encoder may spend its
+            // bit budget on the top rows of a high-motion frame and fall back to very
+            // high QP (extreme macroblocking) for the bottom rows.
+            // eAVEncCommonRateControlMode_CBR = 0
+            VARIANT vrc; VariantInit(&vrc);
+            vrc.vt = VT_UI4; vrc.uintVal = 0;  // CBR
+            ca->SetValue(&CODECAPI_AVEncCommonRateControlMode, &vrc);
+
+            // Min/max QP: hard floor and ceiling for rate control.
+            // Even in CBR mode, some hardware encoders allow QP to spike during
+            // scene cuts. Clamping to [20, 35] keeps quality stable.
+            // eAVEncVideoEncodeQP carries the max; use eAVEncVideoMinQP for floor.
+            VARIANT vminqp; VariantInit(&vminqp);
+            vminqp.vt = VT_UI4; vminqp.uintVal = 20;
+            ca->SetValue(&CODECAPI_AVEncVideoMinQP, &vminqp);
         }
     }
 
