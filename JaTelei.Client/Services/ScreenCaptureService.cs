@@ -149,10 +149,13 @@ public static class ScreenCaptureService
     private static bool   _initialized;
     private static IntPtr _videoBuf = IntPtr.Zero;
     private static IntPtr _audioBuf = IntPtr.Zero;
+    private static IntPtr _pcmBuf   = IntPtr.Zero;
 
     // 50 MB video, 512 KB audio per frame
-    private const int VideoBufSize = 50 * 1024 * 1024;
-    private const int AudioBufSize =  512 * 1024;
+    private const int VideoBufSize  = 50 * 1024 * 1024;
+    private const int AudioBufSize  =  512 * 1024;
+    // 2 s of stereo float32 @ 48 kHz  =  48000*2*2 floats
+    private const int PcmBufFloats  = 48000 * 2 * 2;
 
     public static int  OutputWidth   { get; private set; }
     public static int  OutputHeight  { get; private set; }
@@ -233,6 +236,7 @@ public static class ScreenCaptureService
         _initialized = true;
         _videoBuf    = Marshal.AllocHGlobal(VideoBufSize);
         _audioBuf    = Marshal.AllocHGlobal(AudioBufSize);
+        _pcmBuf      = Marshal.AllocHGlobal(PcmBufFloats * sizeof(float));
         AudioEnabled = enableAudio;
 
         JC_GetOutputSize(out int w, out int h);
