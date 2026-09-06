@@ -16,6 +16,10 @@ public partial class MainWindow : Window
     private readonly SignalingService _signaling = new();
     private UpdateService.UpdateInfo? _pendingUpdate;
 
+    // Track the active sender so we can stop it and show self-preview
+    private WebRtcService? _currentSenderService;
+    private FriendsViewModel? _currentFriendsVm;
+
     public MainWindow()
     {
         InitializeComponent();
@@ -128,10 +132,15 @@ public partial class MainWindow : Window
             _ = rvm.DisposeAsync().AsTask();
         }
 
+        // Para qualquer transmissão de compartilhamento ativa
+        StopCurrentSender();
+
         try
         {
             var vm = new FriendsViewModel(_api, _signaling);
+            _currentFriendsVm = vm;
             vm.StartShareRequested += friend => Dispatcher.Invoke(() => ShowSharePicker(friend));
+            vm.StopShareRequested  += OnStopShareRequested;
             _ = vm.LoadCommand.ExecuteAsync(null);
             MainContent.Content = new FriendsView { DataContext = vm };
         }
@@ -173,7 +182,12 @@ public partial class MainWindow : Window
 
     private async Task StartSendingAsync(Friend friend, ShareTarget target)
     {
+        // Stop any previous transmission before starting a new one
+        StopCurrentSender();
+
         var webRtc = new WebRtcService();
+        _currentSenderService = webRtc;
+
         var friendId = friend.Id.ToString();
 
         Action<string> iceCandidateReadyHandler = async c =>
@@ -211,6 +225,13 @@ public partial class MainWindow : Window
 
         webRtc.StartCapture(target: target);
 
+        // Notify FriendsViewModel that sharing has started
+        Dispatcher.Invoke(() => _currentFriendsVm?.OnSharingStarted());
+
+        // Wire self-preview: update FriendsView with a screenshot every ~3s
+        webRtc.SenderPreviewFrame += preview =>
+            Dispatcher.Invoke(() => _currentFriendsVm?.OnPreviewFrame(preview));
+
         webRtc.IceStateChanged += state =>
         {
             if (state == "closed" || state == "failed")
@@ -220,8 +241,29 @@ public partial class MainWindow : Window
                 _signaling.IceCandidateReceived -= iceCandReceivedHandler;
                 File.AppendAllText(LogPath,
                     $"[Sender] {DateTime.Now}: ICE {state} — handlers desincritos\n");
+
+                if (ReferenceEquals(_currentSenderService, webRtc))
+                {
+                    _currentSenderService = null;
+                    Dispatcher.Invoke(() => _currentFriendsVm?.OnSharingStopped());
+                }
             }
         };
+    }
+
+    private void OnStopShareRequested()
+    {
+        StopCurrentSender();
+    }
+
+    private void StopCurrentSender()
+    {
+        var svc = _currentSenderService;
+        if (svc == null) return;
+        _currentSenderService = null;
+        svc.StopCapture();
+        _ = svc.DisposeAsync().AsTask();
+        Dispatcher.Invoke(() => _currentFriendsVm?.OnSharingStopped());
     }
 
     // ── Receiver side ──────────────────────────────────────────────────────

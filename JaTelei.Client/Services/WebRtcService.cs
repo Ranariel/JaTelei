@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Windows.Media.Imaging;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -67,6 +68,7 @@ public class WebRtcService : IAsyncDisposable
     public event Action<byte[], int, int>? FrameReceived;
     public event Action<string>?           IceCandidateReady;
     public event Action<string>?           IceStateChanged;
+    public event Action<BitmapSource>?     SenderPreviewFrame;
 
     public bool IsConnected =>
         _pc?.iceConnectionState == RTCIceConnectionState.connected;
@@ -446,6 +448,27 @@ public class WebRtcService : IAsyncDisposable
                                 if (_framesSent == 1)
                                     File.AppendAllText(LogPath,
                                         $"[Capture] {DateTime.Now}: primeiro frame enviado ({h264.Length}B)\n");
+
+                                // Self-preview: capture screenshot every ~3 seconds
+                                if (_framesSent % 90 == 0 && SenderPreviewFrame != null)
+                                {
+                                    try
+                                    {
+                                        BitmapSource? preview = null;
+                                        if (target?.WindowHandle is IntPtr ph && ph != IntPtr.Zero)
+                                            preview = CaptureToBitmapSource(ph);
+                                        else
+                                        {
+                                            int sx = 0, sy = 0, sw, sh;
+                                            if (target?.MonitorBounds is System.Windows.Rect mb)
+                                            { sx=(int)mb.X; sy=(int)mb.Y; sw=(int)mb.Width; sh=(int)mb.Height; }
+                                            else { sw=(int)System.Windows.SystemParameters.PrimaryScreenWidth; sh=(int)System.Windows.SystemParameters.PrimaryScreenHeight; }
+                                            preview = CaptureRegionToBitmapSource(sx, sy, sw, sh);
+                                        }
+                                        if (preview != null) SenderPreviewFrame.Invoke(preview);
+                                    }
+                                    catch { /* preview is best-effort */ }
+                                }
                             }
                             catch (Exception ex)
                             {
@@ -477,6 +500,44 @@ public class WebRtcService : IAsyncDisposable
     {
         _cts?.Cancel();
         _cts = null;
+    }
+
+
+    // ── BitmapSource helpers (self-preview) ──────────────────────────────────
+
+    private BitmapSource? CaptureToBitmapSource(IntPtr hwnd)
+    {
+        var raw = CaptureWindow(hwnd, out int w, out int h);
+        return BgraToBitmapSource(raw, w, h);
+    }
+
+    private BitmapSource? CaptureRegionToBitmapSource(int x, int y, int w, int h)
+    {
+        var raw = CaptureRegion(x, y, w, h, out int ow, out int oh);
+        return BgraToBitmapSource(raw, ow, oh);
+    }
+
+    private static BitmapSource? BgraToBitmapSource(byte[] bgra, int w, int h)
+    {
+        if (w <= 0 || h <= 0 || bgra.Length < w * h * 4) return null;
+        // Scale down for preview (max 320px wide)
+        int dw = w, dh = h;
+        if (dw > 320) { dh = dh * 320 / dw; dw = 320; }
+        using var bmp = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+        var bd = bmp.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+        System.Runtime.InteropServices.Marshal.Copy(bgra, 0, bd.Scan0, Math.Min(bgra.Length, Math.Abs(bd.Stride) * h));
+        bmp.UnlockBits(bd);
+        using var scaled = new Bitmap(bmp, dw, dh);
+        using var ms = new System.IO.MemoryStream();
+        scaled.Save(ms, ImageFormat.Png);
+        ms.Seek(0, System.IO.SeekOrigin.Begin);
+        var bi = new BitmapImage();
+        bi.BeginInit();
+        bi.CacheOption  = BitmapCacheOption.OnLoad;
+        bi.StreamSource = ms;
+        bi.EndInit();
+        bi.Freeze();
+        return bi;
     }
 
     // ── GDI helpers (fallback only) ───────────────────────────────────────────

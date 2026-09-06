@@ -161,7 +161,10 @@
 
             <!-- Estado: amigo selecionado -->
             <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center"
+                        MaxWidth="340"
                         Visibility="{Binding SelectedFriend, Converter={StaticResource NotNullToVis}}">
+
+                <!-- Ícone + nome do amigo -->
                 <Border Width="52" Height="52"
                         Background="#0F1A2E"
                         BorderBrush="#3B82F6"
@@ -178,17 +181,66 @@
                     <Run Text="Compartilhar com "/>
                     <Run Text="{Binding SelectedFriend.Username}" FontWeight="Bold" Foreground="#3B82F6"/>
                 </TextBlock>
-                <TextBlock Text="A sessão começa quando o amigo aceitar"
-                           Foreground="#888888"
-                           FontSize="11"
-                           TextAlignment="Center"
-                           Margin="0,0,0,20"/>
-                <Button Content="Iniciar compartilhamento"
-                        Command="{Binding ShareScreenCommand}"
-                        Style="{StaticResource BtnPrimary}"
-                        Padding="20,10"
-                        FontSize="13"
-                        HorizontalAlignment="Center"/>
+
+                <!-- Subtítulo e botão iniciar (só quando NÃO está compartilhando) -->
+                <StackPanel Visibility="{Binding IsNotSharing, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="A sessão começa quando o amigo aceitar"
+                               Foreground="#888888"
+                               FontSize="11"
+                               TextAlignment="Center"
+                               Margin="0,0,0,20"/>
+                    <Button Content="Iniciar compartilhamento"
+                            Command="{Binding ShareScreenCommand}"
+                            Style="{StaticResource BtnPrimary}"
+                            Padding="20,10"
+                            FontSize="13"
+                            HorizontalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- Self-preview + botão parar (só quando está compartilhando) -->
+                <StackPanel Visibility="{Binding IsSharing, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="● Compartilhando ao vivo"
+                               Foreground="#52C87E"
+                               FontSize="11"
+                               FontWeight="SemiBold"
+                               TextAlignment="Center"
+                               Margin="0,0,0,10"/>
+
+                    <!-- Preview do que está sendo compartilhado -->
+                    <Border Background="#0A0A0A"
+                            BorderBrush="#2A2A2A"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Margin="0,0,0,14"
+                            ClipToBounds="True"
+                            MinHeight="60">
+                        <Grid>
+                            <Image Source="{Binding SelfPreviewImage}"
+                                   MaxHeight="180"
+                                   Stretch="Uniform"
+                                   RenderOptions.BitmapScalingMode="LowQuality"/>
+                            <TextBlock Text="Aguardando prévia..."
+                                       Foreground="#444444"
+                                       FontSize="11"
+                                       HorizontalAlignment="Center"
+                                       VerticalAlignment="Center"
+                                       Margin="0,20"
+                                       Visibility="{Binding SelfPreviewImage, Converter={StaticResource NullToVis}}"/>
+                        </Grid>
+                    </Border>
+
+                    <!-- Botão parar -->
+                    <Button Command="{Binding StopShareCommand}"
+                            Style="{StaticResource BtnSecondary}"
+                            Padding="20,10"
+                            FontSize="13"
+                            HorizontalAlignment="Center"
+                            Foreground="#E05252"
+                            BorderBrush="#E05252">
+                        <TextBlock Text="⏹ Parar compartilhamento" Foreground="#E05252"/>
+                    </Button>
+                </StackPanel>
+
             </StackPanel>
 
         </Grid>

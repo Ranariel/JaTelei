@@ -376,16 +376,13 @@
                                    Foreground="#F0F0F0"
                                    FontSize="12"
                                    VerticalAlignment="Center"/>
-                        <UniformGrid Grid.Column="1" Rows="1" Columns="3" Height="34">
+                        <UniformGrid Grid.Column="1" Rows="1" Columns="2" Height="34">
                             <Button x:Name="BtnFps30"  Content="30 fps" Tag="30"
                                     Margin="0,0,6,0"
                                     Style="{StaticResource FpsBtnSelected}"
                                     Click="BtnFps_Click"/>
                             <Button x:Name="BtnFps60"  Content="60 fps" Tag="60"
                                     Margin="0,0,6,0"
-                                    Style="{StaticResource FpsBtn}"
-                                    Click="BtnFps_Click"/>
-                            <Button x:Name="BtnFps120" Content="120 fps" Tag="120"
                                     Style="{StaticResource FpsBtn}"
                                     Click="BtnFps_Click"/>
                         </UniformGrid>
