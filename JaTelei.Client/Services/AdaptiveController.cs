@@ -59,7 +59,7 @@ public sealed class AdaptiveController : IDisposable
 
     // RTCP stats (set from the SIPSorcery RTCP event)
     private volatile float  _lossRatio = 0f;
-    private volatile double _rttMs     = 0.0;
+    private double _rttMs     = 0.0;
 
     private readonly Timer _timer;
 

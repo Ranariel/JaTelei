@@ -9,6 +9,7 @@
     <ApplicationIcon>Resources\app.ico</ApplicationIcon>
     <RootNamespace>JaTelei.Client</RootNamespace>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Version>1.0</Version>
     <!-- Publica como EXE único e autocontido -->
