@@ -172,7 +172,8 @@ public sealed class AudioEngine : IAsyncDisposable
                     int encoded = _encoder.Encode(
                         _accumBuf.AsSpan(0, opusStereoSamples),
                         OpusFrameSamples,
-                        _encodedBuf.AsSpan());
+                        _encodedBuf.AsSpan(),
+                        _encodedBuf.Length);
 
                     if (encoded > 0)
                     {
