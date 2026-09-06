@@ -229,6 +229,10 @@ struct EngineState {
     ComPtr<IMFTransform>           aacEncoder;
     std::mutex                     audioOutMtx;
     std::vector<BYTE>              audioOutBuf;
+    std::mutex                     pcmOutMtx;
+    std::vector<float>             pcmOutBuf;    // raw stereo float32 @ native sample rate
+    int                            pcmSampleRate = 0;
+    int                            pcmChannels   = 0;
 
     // Params
     JC_InitParams  params {};
@@ -589,10 +593,16 @@ static HRESULT InitEncoder(EngineState* e)
             vll.vt = VT_BOOL; vll.boolVal = VARIANT_TRUE;
             ca->SetValue(&CODECAPI_AVEncCommonLowLatency, &vll);
 
-            // GOP size: IDR every 1s — stale rows never persist across cut
+            // GOP size: IDR every 1s — decoder can recover fast after packet loss
             VARIANT vgop; VariantInit(&vgop);
             vgop.vt = VT_UI4; vgop.uintVal = (UINT)e->params.fps;
             ca->SetValue(&CODECAPI_AVEncMPVGOPSize, &vgop);
+
+            // Max QP: cap at 35 — prevents the encoder from producing extreme blockiness
+            // under motion bursts; supported on Intel QSV and MS software H264 encoder.
+            VARIANT vqp; VariantInit(&vqp);
+            vqp.vt = VT_UI8; vqp.ullVal = 35;
+            ca->SetValue(&CODECAPI_AVEncVideoEncodeQP, &vqp);  // hint, not hard cap on all HW
         }
     }
 
@@ -709,6 +719,19 @@ static HRESULT InitWasapi(EngineState* e)
                 }
                 buf->Unlock();
                 buf->SetCurrentLength((DWORD)bytes);
+
+                // PCM ring buffer: keep ≤ 1 s of stereo float32 for C# to pull
+                {
+                    std::lock_guard<std::mutex> lkp(e->pcmOutMtx);
+                    e->pcmSampleRate = (int)e->pWaveFmt->nSamplesPerSec;
+                    e->pcmChannels   = outCh;
+                    size_t maxSamp   = (size_t)e->pcmSampleRate * outCh; // 1 s
+                    float* fSrc      = (float*)dst;
+                    if (e->pcmOutBuf.size() + nf * outCh > maxSamp)
+                        e->pcmOutBuf.clear();
+                    e->pcmOutBuf.insert(e->pcmOutBuf.end(), fSrc, fSrc + nf * outCh);
+                }
+
                 MFCreateSample(&sample);
                 sample->AddBuffer(buf.Get());
                 e->aacEncoder->ProcessInput(0, sample.Get(), 0);
@@ -1027,6 +1050,23 @@ JCAPI int JC_CaptureAndEncode(
 JCAPI void JC_ForceKeyframe(void)
 {
     if (g_eng) g_eng->forceKey = true;
+}
+
+// Returns raw stereo float32 PCM samples captured since last call.
+// outSampleRate / outChannels receive the native capture format.
+// Returns number of float samples written (frames * channels).
+JCAPI int JC_GetPcmAudio(float* pcmBuf, int maxFloats, int* outSampleRate, int* outChannels)
+{
+    if (!g_eng || !g_eng->initialized || !pcmBuf || maxFloats <= 0) return 0;
+    std::lock_guard<std::mutex> lk(g_eng->pcmOutMtx);
+    if (outSampleRate) *outSampleRate = g_eng->pcmSampleRate;
+    if (outChannels)   *outChannels   = g_eng->pcmChannels;
+    int n = (int)std::min((size_t)maxFloats, g_eng->pcmOutBuf.size());
+    if (n > 0) {
+        memcpy(pcmBuf, g_eng->pcmOutBuf.data(), n * sizeof(float));
+        g_eng->pcmOutBuf.erase(g_eng->pcmOutBuf.begin(), g_eng->pcmOutBuf.begin() + n);
+    }
+    return n;
 }
 
 JCAPI void JC_SetBitrate(int bitrateKbps)

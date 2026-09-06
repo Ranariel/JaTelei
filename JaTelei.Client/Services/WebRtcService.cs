@@ -34,7 +34,7 @@ public class WebRtcService : IAsyncDisposable
     // Set by ICE "connected" when DLL path is unavailable; capture loop reads it to force IDR.
     private volatile bool _forceGdiKeyframe;
 
-    private static readonly string LogPath =
+    internal static readonly string LogPath =
         Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
 
     private static RTCConfiguration BuildRtcConfig()
@@ -88,6 +88,11 @@ public class WebRtcService : IAsyncDisposable
             new List<VideoFormat> { new VideoFormat(VideoCodecsEnum.H264, 96) },
             MediaStreamStatusEnum.SendOnly);
         _pc.addTrack(videoTrack);
+
+        var audioTrack = new MediaStreamTrack(
+            new List<AudioFormat> { new AudioFormat(AudioCodecsEnum.PCMU, 0) },
+            MediaStreamStatusEnum.SendOnly);
+        _pc.addTrack(audioTrack);
 
         _pc.onicecandidate += c =>
         {
@@ -177,6 +182,18 @@ public class WebRtcService : IAsyncDisposable
             new List<VideoFormat> { new VideoFormat(VideoCodecsEnum.H264, 96) },
             MediaStreamStatusEnum.RecvOnly);
         _pc.addTrack(videoTrack);
+
+        // Audio track: PCMU (G711 µ-law, 8 kHz)
+        _pc.OnAudioFrameReceived += (IPEndPoint ep, uint ts, byte[] frame, AudioFormat fmt) =>
+        {
+            // Decode G711 PCMU → 16-bit PCM → play via WaveOut
+            AudioPlayer.Play(frame);
+        };
+
+        var audioTrackR = new MediaStreamTrack(
+            new List<AudioFormat> { new AudioFormat(AudioCodecsEnum.PCMU, 0) },
+            MediaStreamStatusEnum.RecvOnly);
+        _pc.addTrack(audioTrackR);
 
         _pc.onicecandidate += c =>
         {
@@ -289,7 +306,7 @@ public class WebRtcService : IAsyncDisposable
                     captureMode:  JcCaptureMode.Auto,
                     codec:        JcCodec.H264,
                     encoderVendor: JcEncoderVendor.Auto,
-                    enableAudio:  false);
+                    enableAudio:  true);   // WASAPI loopback — captured PCM sent as G711 PCMU
 
                 if (!dllReady)
                     File.AppendAllText(LogPath,
@@ -325,6 +342,19 @@ public class WebRtcService : IAsyncDisposable
                             // ─── Primary path: GPU pipeline via DLL ───────
                             var result = ScreenCaptureService.CaptureFrame();
                             h264 = result.Video;
+
+                            // Pull PCM, resample to 8 kHz mono, encode G711 PCMU, send
+                            if (ScreenCaptureService.AudioEnabled)
+                            {
+                                var pcm = ScreenCaptureService.GetPcmAudio(
+                                    out int sr, out int ch);
+                                if (pcm != null && sr > 0 && ch > 0)
+                                {
+                                    var mulaw = PcmToMuLaw8k(pcm, sr, ch);
+                                    if (mulaw.Length > 0)
+                                        _pc?.SendAudio((uint)mulaw.Length, mulaw);
+                                }
+                            }
                         }
                         else
                         {
@@ -496,10 +526,57 @@ public class WebRtcService : IAsyncDisposable
     /// clamped entre 2 Mbps e 20 Mbps.
     /// Ex: 1080p@30 → 6,2 Mbps | 1080p@60 → 12,4 Mbps | 720p@30 → 2,8 Mbps
     /// </summary>
+    // ── Audio helpers ──────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Converts float32 stereo/mono PCM at any sample rate to G711 µ-law (PCMU) at 8 kHz mono.
+    /// Simple linear resampling — good enough for voice/system audio quality.
+    /// </summary>
+    private static byte[] PcmToMuLaw8k(float[] pcm, int srcRate, int srcCh)
+    {
+        const int dstRate = 8000;
+        int srcFrames = pcm.Length / srcCh;
+        int dstFrames = (int)((long)srcFrames * dstRate / srcRate);
+        if (dstFrames <= 0) return Array.Empty<byte>();
+
+        var mulaw = new byte[dstFrames];
+        double ratio = (double)srcFrames / dstFrames;
+        for (int i = 0; i < dstFrames; i++)
+        {
+            int si = (int)(i * ratio) * srcCh;
+            if (si >= pcm.Length) si = pcm.Length - srcCh;
+            // Mix channels to mono
+            float sample = 0f;
+            for (int c = 0; c < srcCh; c++) sample += pcm[si + c];
+            sample /= srcCh;
+            mulaw[i] = FloatToMuLaw(sample);
+        }
+        return mulaw;
+    }
+
+    private static byte FloatToMuLaw(float sample)
+    {
+        if (sample >  1f) sample =  1f;
+        if (sample < -1f) sample = -1f;
+        bool neg = sample < 0f;
+        if (neg) sample = -sample;
+        // Map to 14-bit magnitude + bias
+        int pcm16 = (int)(sample * 32767);
+        pcm16 += 0x84;                          // µ-law bias
+        if (pcm16 > 0x7FFF) pcm16 = 0x7FFF;
+        // Find segment (exponent)
+        int exp = 7;
+        for (int i = 6; i >= 0; i--)
+            if ((pcm16 & (0x4000 >> i)) != 0) { exp = 7 - i; break; }
+        int mantissa = (pcm16 >> (exp + 3)) & 0x0F;
+        byte compressed = (byte)(~((neg ? 0x00 : 0x80) | (exp << 4) | mantissa) & 0xFF);
+        return compressed;
+    }
+
     private static int ComputeBitrateKbps(int w, int h, int fps)
     {
-        long bps = (long)w * h * fps / 10; // 0,10 bits/pixel/frame
-        return (int)Math.Clamp(bps / 1000, 2_000, 20_000);
+        long bps = (long)w * h * fps / 6; // 0,17 bits/pixel/frame — suficiente para jogo com muito movimento
+        return (int)Math.Clamp(bps / 1000, 4_000, 30_000);
     }
 
 
