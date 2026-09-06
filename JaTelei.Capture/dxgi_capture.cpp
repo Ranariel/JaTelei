@@ -406,7 +406,7 @@ static HRESULT InitWGC(EngineState* e)
 static HRESULT InitVideoProcessor(EngineState* e)
 {
     int dstW = ALIGN16(e->params.dstWidth);
-    int dstH = ALIGN16(e->params.dstHeight);
+    int dstH = (e->params.dstHeight + 1) & ~1;  // H.264: height must be even, NOT multiple of 16 — ALIGN16 causes 1080→1088→black strip at bottom
 
     // NV12 output texture
     D3D11_TEXTURE2D_DESC td = {};
@@ -486,7 +486,7 @@ static HRESULT CreateInputView(EngineState* e, ID3D11Texture2D* srcTex)
 static HRESULT InitEncoder(EngineState* e)
 {
     int dstW = ALIGN16(e->params.dstWidth);
-    int dstH = ALIGN16(e->params.dstHeight);
+    int dstH = (e->params.dstHeight + 1) & ~1;  // H.264: height must be even, NOT multiple of 16 — ALIGN16 causes 1080→1088→black strip at bottom
 
     // Choose codec + encoder
     JC_Codec codec = e->params.codec;
@@ -823,7 +823,7 @@ static bool CaptureFrameToNV12(EngineState* e)
 
     // GPU blit: BGRA → NV12 + resize
     int dstW = ALIGN16(e->params.dstWidth);
-    int dstH = ALIGN16(e->params.dstHeight);
+    int dstH = (e->params.dstHeight + 1) & ~1;  // H.264: height must be even, NOT multiple of 16 — ALIGN16 causes 1080→1088→black strip at bottom
     RECT dr = { 0, 0, dstW, dstH };
     e->videoCtx->VideoProcessorSetOutputTargetRect(e->vp.Get(), TRUE, &dr);
     e->videoCtx->VideoProcessorSetStreamSourceRect(e->vp.Get(), 0, FALSE, nullptr);
@@ -846,7 +846,7 @@ static HRESULT EncodeNV12(EngineState* e,
 {
     *outBytes = 0; *outIsKey = 0;
     int dstW = ALIGN16(e->params.dstWidth);
-    int dstH = ALIGN16(e->params.dstHeight);
+    int dstH = (e->params.dstHeight + 1) & ~1;  // H.264: height must be even, NOT multiple of 16 — ALIGN16 causes 1080→1088→black strip at bottom
 
     LONGLONG ts  = e->sampleCount * (10000000LL / e->params.fps);
     LONGLONG dur = 10000000LL / e->params.fps;
