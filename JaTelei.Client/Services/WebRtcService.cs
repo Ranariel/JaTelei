@@ -31,6 +31,8 @@ public class WebRtcService : IAsyncDisposable
 
     private int _framesRecv;
     private int _framesSent;
+    private long _audioLoggedOnce;  // 0 = not yet logged; 1 = logged
+    private long _audioNullCount;   // count of frames with empty PCM
     // Set by ICE "connected" when DLL path is unavailable; capture loop reads it to force IDR.
     private volatile bool _forceGdiKeyframe;
 
@@ -353,7 +355,20 @@ public class WebRtcService : IAsyncDisposable
                                 {
                                     var mulaw = PcmToMuLaw8k(pcm, sr, ch);
                                     if (mulaw.Length > 0)
+                                    {
                                         _pc?.SendAudio((uint)mulaw.Length, mulaw);
+                                        // Log first audio packet sent (one-time diagnostic)
+                                        if (System.Threading.Interlocked.Exchange(ref _audioLoggedOnce, 1) == 0)
+                                            File.AppendAllText(LogPath,
+                                                $"[Audio/Sender] {DateTime.Now}: first packet sent {mulaw.Length}B sr={sr} ch={ch}\n");
+                                    }
+                                }
+                                else if (System.Threading.Interlocked.Read(ref _audioLoggedOnce) == 0)
+                                {
+                                    // Log only once if PCM is empty on first few frames
+                                    if (System.Threading.Interlocked.Increment(ref _audioNullCount) == 30)
+                                        File.AppendAllText(LogPath,
+                                            $"[Audio/Sender] {DateTime.Now}: PCM buffer empty after 30 frames — WASAPI may not be capturing\n");
                                 }
                             }
                         }
