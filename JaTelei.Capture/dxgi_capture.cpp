@@ -693,7 +693,7 @@ static HRESULT InitWasapi(EngineState* e)
                     std::lock_guard<std::mutex> lkRaw(e->audioRawMtx);
                     e->audioRawSr = sr;
                     e->audioRawCh = outCh;
-                    int maxFrames = kAudioRawMaxSeconds * sr;
+                    int maxFrames = EngineState::kAudioRawMaxSeconds * sr;
                     float* src32 = (float*)data;
                     // Evict old samples if buffer is full
                     int existingFrames = (int)(e->audioRawBuf.size() / outCh);
