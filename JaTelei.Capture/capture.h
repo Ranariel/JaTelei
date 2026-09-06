@@ -175,6 +175,11 @@ JCAPI int  JC_CaptureAndEncode(
 JCAPI void JC_ForceKeyframe(void);
 
 /** Dynamically update video bitrate (kbps). */
+// Returns raw stereo float32 PCM samples captured since last call (WASAPI loopback).
+// outSampleRate / outChannels receive the native capture format (e.g. 48000, 2).
+// Returns total float values written (frames × channels); 0 if none available.
+JCAPI int  JC_GetPcmAudio(float* pcmBuf, int maxFloats, int* outSampleRate, int* outChannels);
+
 JCAPI void JC_SetBitrate(int bitrateKbps);
 
 /** Query actual encoded frame dimensions (may differ from requested). */
