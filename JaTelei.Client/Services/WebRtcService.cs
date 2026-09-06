@@ -652,8 +652,8 @@ public class WebRtcService : IAsyncDisposable
 
     private static int ComputeBitrateKbps(int w, int h, int fps)
     {
-        long bps = (long)w * h * fps / 6; // 0,17 bits/pixel/frame — suficiente para jogo com muito movimento
-        return (int)Math.Clamp(bps / 1000, 4_000, 30_000);
+        long bps = (long)w * h * fps / 3; // 0,33 bits/pixel/frame — headroom para Quality VBR sem macroblocking
+        return (int)Math.Clamp(bps / 1000, 4_000, 50_000);
     }
 
 
