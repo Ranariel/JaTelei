@@ -572,7 +572,7 @@ static HRESULT InitEncoder(EngineState* e)
     MFCreateMediaType(&outMT);
     outMT->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
     outMT->SetGUID(MF_MT_SUBTYPE,    e->videoFmt);
-    outMT->SetUINT32(MF_MT_AVG_BITRATE, (UINT32)(e->params.bitrateKbps * 1000));
+    outMT->SetUINT32(MF_MT_AVG_BITRATE, 50000000U);  // 50 Mbps: teto alto para Unconstrained VBR nao restringir bits em conteudo complexo
     MFSetAttributeSize(outMT.Get(), MF_MT_FRAME_SIZE, (UINT32)dstW, (UINT32)dstH);
     MFSetAttributeRatio(outMT.Get(), MF_MT_FRAME_RATE, (UINT32)e->params.fps, 1);
     MFSetAttributeRatio(outMT.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
@@ -598,28 +598,28 @@ static HRESULT InitEncoder(EngineState* e)
             vgop.vt = VT_UI4; vgop.uintVal = (UINT)e->params.fps;
             ca->SetValue(&CODECAPI_AVEncMPVGOPSize, &vgop);
 
-            // ── Rate control: Quality VBR ────────────────────────────────────────
-            // eAVEncCommonRateControlMode_Quality = 3: encoder usa quantos bits
-            // forem necessários para manter a qualidade alvo. Sem macroblocking.
+            // ── Rate control: Unconstrained VBR (modo 2) ─────────────────────────
+            // Modo 3 (Quality VBR) é ignorado por encoders hardware (NVENC/AMF/QSV).
+            // Modo 2 (Unconstrained VBR) é suportado por TODOS os encoders:
+            // o encoder pode usar quantos bits quiser por frame para atingir a
+            // qualidade alvo, sem cap por frame. Combinar com MaxQP garante que
+            // frames complexos (overlays, texto, UI) recebam bits suficientes.
             VARIANT vrc; VariantInit(&vrc);
-            vrc.vt = VT_UI4; vrc.uintVal = 3;  // Quality VBR
+            vrc.vt = VT_UI4; vrc.uintVal = 2;  // eAVEncCommonRateControlMode_UnconstrainedVBR
             ca->SetValue(&CODECAPI_AVEncCommonRateControlMode, &vrc);
 
-            // Qualidade alvo 0-100. 95 = muito alta.
-            VARIANT vq; VariantInit(&vq);
-            vq.vt = VT_UI4; vq.uintVal = 95;
-            ca->SetValue(&CODECAPI_AVEncCommonQuality, &vq);
-
-            // MaxQP = 24: teto ABSOLUTO. Hardware encoders (NVENC/AMF/QSV)
-            // costumam ignorar AVEncCommonQuality mas respeitam MaxQP.
-            // QP > 26 causa macroblocking visivel; 24 garante qualidade alta.
+            // MaxQP = 22: teto DURO de quantização. Encoders hardware respeitam
+            // este valor mesmo quando ignoram outros parâmetros de qualidade.
+            // QP ≤ 22 garante qualidade visual alta mesmo em conteúdo complexo
+            // (sobreposições, texto, barras de progresso, UI com alto contraste).
             VARIANT vmaxqp; VariantInit(&vmaxqp);
-            vmaxqp.vt = VT_UI4; vmaxqp.uintVal = 24;
+            vmaxqp.vt = VT_UI4; vmaxqp.uintVal = 22;
             ca->SetValue(&CODECAPI_AVEncVideoMaxQP, &vmaxqp);
 
-            // MinQP = 18: evita desperdicio de bits em frames estaticos.
+            // MinQP = 16: evita desperdício em frames estáticos, mas permite
+            // qualidade muito alta quando o conteúdo exigir.
             VARIANT vminqp; VariantInit(&vminqp);
-            vminqp.vt = VT_UI4; vminqp.uintVal = 18;
+            vminqp.vt = VT_UI4; vminqp.uintVal = 16;
             ca->SetValue(&CODECAPI_AVEncVideoMinQP, &vminqp);
         }
     }
