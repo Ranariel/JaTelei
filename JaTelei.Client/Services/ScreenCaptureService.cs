@@ -120,10 +120,6 @@ public static class ScreenCaptureService
     private static extern void JC_SetBitrate(int bitrateKbps);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
-    private static extern int JC_GetPcmAudio(
-        IntPtr pcmBuf, int maxFloats, out int sampleRate, out int channels);
-
-    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern void JC_GetOutputSize(out int width, out int height);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
@@ -144,19 +140,28 @@ public static class ScreenCaptureService
         [Out, MarshalAs(UnmanagedType.LPArray, SizeParamIndex = 1)]
         JcWindowInfo[]? outInfo, int maxCount);
 
+    // New audio/resolution APIs (Media Engine v2)
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern void JC_GetAudioFormat(out int sampleRate, out int channels);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int JC_GetPcmAudio(
+        [Out] float[] outBuf, int maxFrames, out int outFrames);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int JC_SetResolution(int width, int height);
+
     // ── State ─────────────────────────────────────────────────────────────────
 
     private static bool   _initialized;
     private static IntPtr _videoBuf = IntPtr.Zero;
     private static IntPtr _audioBuf = IntPtr.Zero;
-    private static IntPtr _pcmBuf   = IntPtr.Zero;
 
     // 50 MB video, 512 KB audio per frame
-    private const int VideoBufSize  = 50 * 1024 * 1024;
-    private const int AudioBufSize  =  512 * 1024;
-    // 2 s of stereo float32 @ 48 kHz  =  48000*2*2 floats
-    private const int PcmBufFloats  = 48000 * 2 * 2;
+    private const int VideoBufSize = 50 * 1024 * 1024;
+    private const int AudioBufSize =  512 * 1024;
 
+    public static bool IsInitialized { get => _initialized; }
     public static int  OutputWidth   { get; private set; }
     public static int  OutputHeight  { get; private set; }
     public static bool AudioEnabled  { get; private set; }
@@ -236,7 +241,6 @@ public static class ScreenCaptureService
         _initialized = true;
         _videoBuf    = Marshal.AllocHGlobal(VideoBufSize);
         _audioBuf    = Marshal.AllocHGlobal(AudioBufSize);
-        _pcmBuf      = Marshal.AllocHGlobal(PcmBufFloats * sizeof(float));
         AudioEnabled = enableAudio;
 
         JC_GetOutputSize(out int w, out int h);
@@ -311,34 +315,58 @@ public static class ScreenCaptureService
         if (_initialized && kbps > 0) JC_SetBitrate(kbps);
     }
 
+    // ── Audio PCM / Resolution ────────────────────────────────────────────────
+
+    /// <summary>
+    /// Returns the native WASAPI device sample rate and channel count.
+    /// Returns (0, 0) if audio is not enabled or not yet started.
+    /// </summary>
+    public static (int SampleRate, int Channels) GetAudioFormat()
+    {
+        if (!_initialized) return (0, 0);
+        JC_GetAudioFormat(out int sr, out int ch);
+        return (sr, ch);
+    }
+
+    /// <summary>
+    /// Drains up to <paramref name="maxFrames"/> float32 interleaved PCM frames
+    /// from the DLL's internal WASAPI ring buffer.
+    /// Returns the number of frames actually written into <paramref name="buf"/>.
+    /// Thread-safe, non-blocking.
+    /// </summary>
+    public static int GetPcmAudio(float[] buf, int maxFrames)
+    {
+        if (!_initialized) return 0;
+        int hr = JC_GetPcmAudio(buf, maxFrames, out int frames);
+        return hr == 0 ? frames : 0;
+    }
+
+    /// <summary>
+    /// Dynamically change the encoded output resolution.
+    /// Briefly pauses video output (1–2 frames) while reinitializing.
+    /// Returns 0 on success, negative HRESULT on failure.
+    /// </summary>
+    public static int SetResolution(int width, int height)
+    {
+        if (!_initialized) return unchecked((int)0x80004005); // E_FAIL
+        int hr = JC_SetResolution(width, height);
+        if (hr == 0)
+        {
+            JC_GetOutputSize(out int w, out int h);
+            OutputWidth  = w;
+            OutputHeight = h;
+        }
+        return hr;
+    }
+
     public static void Shutdown()
     {
         if (!_initialized) return;
         JC_Release();
         if (_videoBuf != IntPtr.Zero) { Marshal.FreeHGlobal(_videoBuf); _videoBuf = IntPtr.Zero; }
         if (_audioBuf != IntPtr.Zero) { Marshal.FreeHGlobal(_audioBuf); _audioBuf = IntPtr.Zero; }
-        if (_pcmBuf   != IntPtr.Zero) { Marshal.FreeHGlobal(_pcmBuf);   _pcmBuf   = IntPtr.Zero; }
         _initialized = false;
         AudioEnabled = false;
         OutputWidth = OutputHeight = 0;
-    }
-
-    /// <summary>
-    /// Returns raw stereo float32 PCM captured since last call (WASAPI loopback).
-    /// sampleRate / channels reflect the native capture format (e.g. 48000, 2).
-    /// </summary>
-    public static float[]? GetPcmAudio(out int sampleRate, out int channels)
-    {
-        sampleRate = 0; channels = 0;
-        if (!_initialized || _pcmBuf == IntPtr.Zero) return null;
-        int n = JC_GetPcmAudio(_pcmBuf, PcmBufFloats, out sampleRate, out channels);
-        if (n <= 0 || sampleRate <= 0 || channels <= 0) return null;
-        var arr = new float[n];
-        unsafe
-        {
-            fixed (float* p = arr)
-                Buffer.MemoryCopy((void*)_pcmBuf, p, (long)n * 4, (long)n * 4);
-        }
-        return arr;
     }
 }

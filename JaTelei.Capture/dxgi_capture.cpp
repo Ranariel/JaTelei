@@ -48,6 +48,7 @@
 // STL
 #include <algorithm>
 #include <atomic>
+#include <deque>
 #include <mutex>
 #include <memory>
 #include <thread>
@@ -229,10 +230,15 @@ struct EngineState {
     ComPtr<IMFTransform>           aacEncoder;
     std::mutex                     audioOutMtx;
     std::vector<BYTE>              audioOutBuf;
-    std::mutex                     pcmOutMtx;
-    std::vector<float>             pcmOutBuf;    // raw stereo float32 @ native sample rate
-    int                            pcmSampleRate = 0;
-    int                            pcmChannels   = 0;
+
+    // Raw PCM ring buffer for Opus / external encoder
+    // float32 interleaved stereo (or mono), at native device sample rate.
+    // Capped at 2 seconds of audio to prevent unbounded growth.
+    std::mutex                     audioRawMtx;
+    std::deque<float>              audioRawBuf;
+    int                            audioRawSr  = 0;   // sample rate (Hz)
+    int                            audioRawCh  = 0;   // channels (<=2)
+    static constexpr int           kAudioRawMaxSeconds = 2;
 
     // Params
     JC_InitParams  params {};
@@ -401,12 +407,12 @@ static HRESULT InitWGC(EngineState* e)
 }
 
 // ---------------------------------------------------------------------------
-// D3D11 Video Processor: BGRA/BGRX → NV12 + resize
+// D3D11 Video Processor: BGRA/BGRX -> NV12 + resize
 // ---------------------------------------------------------------------------
 static HRESULT InitVideoProcessor(EngineState* e)
 {
     int dstW = ALIGN16(e->params.dstWidth);
-    int dstH = (e->params.dstHeight + 1) & ~1;  // H.264: height must be even, NOT multiple of 16 — ALIGN16 causes 1080→1088→black strip at bottom
+    int dstH = ALIGN16(e->params.dstHeight);
 
     // NV12 output texture
     D3D11_TEXTURE2D_DESC td = {};
@@ -447,7 +453,7 @@ static HRESULT InitVideoProcessor(EngineState* e)
     hr = e->videoDevice->CreateVideoProcessor(e->vpEnum.Get(), 0, &e->vp);
     CHECK_HR(hr, "CreateVideoProcessor");
 
-    // Output view — use raw pointer to avoid ComPtrRef ambiguity
+    // Output view -- use raw pointer to avoid ComPtrRef ambiguity
     D3D11_VIDEO_PROCESSOR_OUTPUT_VIEW_DESC ovd = {};
     ovd.ViewDimension          = D3D11_VPOV_DIMENSION_TEXTURE2D;
     ovd.Texture2D.MipSlice     = 0;
@@ -486,7 +492,7 @@ static HRESULT CreateInputView(EngineState* e, ID3D11Texture2D* srcTex)
 static HRESULT InitEncoder(EngineState* e)
 {
     int dstW = ALIGN16(e->params.dstWidth);
-    int dstH = (e->params.dstHeight + 1) & ~1;  // H.264: height must be even, NOT multiple of 16 — ALIGN16 causes 1080→1088→black strip at bottom
+    int dstH = ALIGN16(e->params.dstHeight);
 
     // Choose codec + encoder
     JC_Codec codec = e->params.codec;
@@ -572,57 +578,16 @@ static HRESULT InitEncoder(EngineState* e)
     MFCreateMediaType(&outMT);
     outMT->SetGUID(MF_MT_MAJOR_TYPE, MFMediaType_Video);
     outMT->SetGUID(MF_MT_SUBTYPE,    e->videoFmt);
-    outMT->SetUINT32(MF_MT_AVG_BITRATE, 50000000U);  // 50 Mbps: teto alto para Unconstrained VBR nao restringir bits em conteudo complexo
+    outMT->SetUINT32(MF_MT_AVG_BITRATE, (UINT32)(e->params.bitrateKbps * 1000));
     MFSetAttributeSize(outMT.Get(), MF_MT_FRAME_SIZE, (UINT32)dstW, (UINT32)dstH);
     MFSetAttributeRatio(outMT.Get(), MF_MT_FRAME_RATE, (UINT32)e->params.fps, 1);
     MFSetAttributeRatio(outMT.Get(), MF_MT_PIXEL_ASPECT_RATIO, 1, 1);
     outMT->SetUINT32(MF_MT_INTERLACE_MODE, MFVideoInterlace_Progressive);
     if (e->videoFmt == MFVideoFormat_H264)
-        outMT->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Main);  // main: CABAC on → better quality
+        outMT->SetUINT32(MF_MT_MPEG2_PROFILE, eAVEncH264VProfile_Base);
 
     hr = e->encoder->SetOutputType(0, outMT.Get(), 0);
     CHECK_HR(hr, "SetOutputType");
-
-    // Codec attributes — must be set before BEGIN_STREAMING
-    {
-        ComPtr<ICodecAPI> ca;
-        if (SUCCEEDED(e->encoder->QueryInterface(IID_PPV_ARGS(&ca)))) {
-            // Low latency: encoder outputs one frame per input (no frame buffering).
-            // Without this, MFT buffers 4-5 frames → periodic freeze bursts.
-            VARIANT vll; VariantInit(&vll);
-            vll.vt = VT_BOOL; vll.boolVal = VARIANT_TRUE;
-            ca->SetValue(&CODECAPI_AVEncCommonLowLatency, &vll);
-
-            // GOP size: IDR every 1s — decoder can recover fast after packet loss
-            VARIANT vgop; VariantInit(&vgop);
-            vgop.vt = VT_UI4; vgop.uintVal = (UINT)e->params.fps;
-            ca->SetValue(&CODECAPI_AVEncMPVGOPSize, &vgop);
-
-            // ── Rate control: Unconstrained VBR (modo 2) ─────────────────────────
-            // Modo 3 (Quality VBR) é ignorado por encoders hardware (NVENC/AMF/QSV).
-            // Modo 2 (Unconstrained VBR) é suportado por TODOS os encoders:
-            // o encoder pode usar quantos bits quiser por frame para atingir a
-            // qualidade alvo, sem cap por frame. Combinar com MaxQP garante que
-            // frames complexos (overlays, texto, UI) recebam bits suficientes.
-            VARIANT vrc; VariantInit(&vrc);
-            vrc.vt = VT_UI4; vrc.uintVal = 2;  // eAVEncCommonRateControlMode_UnconstrainedVBR
-            ca->SetValue(&CODECAPI_AVEncCommonRateControlMode, &vrc);
-
-            // MaxQP = 22: teto DURO de quantização. Encoders hardware respeitam
-            // este valor mesmo quando ignoram outros parâmetros de qualidade.
-            // QP ≤ 22 garante qualidade visual alta mesmo em conteúdo complexo
-            // (sobreposições, texto, barras de progresso, UI com alto contraste).
-            VARIANT vmaxqp; VariantInit(&vmaxqp);
-            vmaxqp.vt = VT_UI4; vmaxqp.uintVal = 22;
-            ca->SetValue(&CODECAPI_AVEncVideoMaxQP, &vmaxqp);
-
-            // MinQP = 16: evita desperdício em frames estáticos, mas permite
-            // qualidade muito alta quando o conteúdo exigir.
-            VARIANT vminqp; VariantInit(&vminqp);
-            vminqp.vt = VT_UI4; vminqp.uintVal = 16;
-            ca->SetValue(&CODECAPI_AVEncVideoMinQP, &vminqp);
-        }
-    }
 
     e->encoder->ProcessMessage(MFT_MESSAGE_NOTIFY_BEGIN_STREAMING, 0);
     e->encoder->ProcessMessage(MFT_MESSAGE_NOTIFY_START_OF_STREAM, 0);
@@ -717,6 +682,38 @@ static HRESULT InitWasapi(EngineState* e)
             if (FAILED(e->capClient->GetBuffer(&data, &nf, &flags, nullptr, nullptr)) || nf == 0) {
                 Sleep(1); continue;
             }
+            if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && data) {
+                int srcCh = (int)e->pWaveFmt->nChannels;
+                int outCh = std::min(srcCh, 2);
+                int sr    = (int)e->pWaveFmt->nSamplesPerSec;
+
+                // --- Raw PCM ring buffer (for Opus / external encoder) ---
+                // Store float32 interleaved stereo (or mono if srcCh==1).
+                {
+                    std::lock_guard<std::mutex> lkRaw(e->audioRawMtx);
+                    e->audioRawSr = sr;
+                    e->audioRawCh = outCh;
+                    int maxFrames = kAudioRawMaxSeconds * sr;
+                    float* src32 = (float*)data;
+                    // Evict old samples if buffer is full
+                    int existingFrames = (int)(e->audioRawBuf.size() / outCh);
+                    int overflow = existingFrames + (int)nf - maxFrames;
+                    if (overflow > 0)
+                        e->audioRawBuf.erase(e->audioRawBuf.begin(),
+                                             e->audioRawBuf.begin() + overflow * outCh);
+                    // Append new samples (down-mix if srcCh > 2)
+                    for (UINT32 f = 0; f < nf; f++) {
+                        e->audioRawBuf.push_back(src32[f * srcCh]);
+                        if (outCh > 1)
+                            e->audioRawBuf.push_back(srcCh > 1 ? src32[f * srcCh + 1] : src32[f * srcCh]);
+                    }
+                }
+
+                if (!e->aacEncoder) {
+                    e->capClient->ReleaseBuffer(nf);
+                    Sleep(1); continue;
+                }
+            }
             if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT) && data && e->aacEncoder) {
                 int srcCh = (int)e->pWaveFmt->nChannels;
                 int outCh = std::min(srcCh, 2);
@@ -737,19 +734,6 @@ static HRESULT InitWasapi(EngineState* e)
                 }
                 buf->Unlock();
                 buf->SetCurrentLength((DWORD)bytes);
-
-                // PCM ring buffer: keep ≤ 1 s of stereo float32 for C# to pull
-                {
-                    std::lock_guard<std::mutex> lkp(e->pcmOutMtx);
-                    e->pcmSampleRate = (int)e->pWaveFmt->nSamplesPerSec;
-                    e->pcmChannels   = outCh;
-                    size_t maxSamp   = (size_t)e->pcmSampleRate * outCh; // 1 s
-                    float* fSrc      = (float*)dst;
-                    if (e->pcmOutBuf.size() + nf * outCh > maxSamp)
-                        e->pcmOutBuf.clear();
-                    e->pcmOutBuf.insert(e->pcmOutBuf.end(), fSrc, fSrc + nf * outCh);
-                }
-
                 MFCreateSample(&sample);
                 sample->AddBuffer(buf.Get());
                 e->aacEncoder->ProcessInput(0, sample.Get(), 0);
@@ -780,7 +764,7 @@ static HRESULT InitWasapi(EngineState* e)
 }
 
 // ---------------------------------------------------------------------------
-// Capture one frame → NV12 on GPU
+// Capture one frame -> NV12 on GPU
 // ---------------------------------------------------------------------------
 static bool CaptureFrameToNV12(EngineState* e)
 {
@@ -821,9 +805,9 @@ static bool CaptureFrameToNV12(EngineState* e)
         return false;
     }
 
-    // GPU blit: BGRA → NV12 + resize
+    // GPU blit: BGRA -> NV12 + resize
     int dstW = ALIGN16(e->params.dstWidth);
-    int dstH = (e->params.dstHeight + 1) & ~1;  // H.264: height must be even, NOT multiple of 16 — ALIGN16 causes 1080→1088→black strip at bottom
+    int dstH = ALIGN16(e->params.dstHeight);
     RECT dr = { 0, 0, dstW, dstH };
     e->videoCtx->VideoProcessorSetOutputTargetRect(e->vp.Get(), TRUE, &dr);
     e->videoCtx->VideoProcessorSetStreamSourceRect(e->vp.Get(), 0, FALSE, nullptr);
@@ -839,14 +823,14 @@ static bool CaptureFrameToNV12(EngineState* e)
 }
 
 // ---------------------------------------------------------------------------
-// Encode NV12 → bitstream
+// Encode NV12 -> bitstream
 // ---------------------------------------------------------------------------
 static HRESULT EncodeNV12(EngineState* e,
     uint8_t* outBuf, int bufSize, int* outBytes, int* outIsKey)
 {
     *outBytes = 0; *outIsKey = 0;
     int dstW = ALIGN16(e->params.dstWidth);
-    int dstH = (e->params.dstHeight + 1) & ~1;  // H.264: height must be even, NOT multiple of 16 — ALIGN16 causes 1080→1088→black strip at bottom
+    int dstH = ALIGN16(e->params.dstHeight);
 
     LONGLONG ts  = e->sampleCount * (10000000LL / e->params.fps);
     LONGLONG dur = 10000000LL / e->params.fps;
@@ -1016,7 +1000,7 @@ JCAPI void JC_Release(void)
     if (g_eng->audioClient) g_eng->audioClient->Stop();
     if (g_eng->pWaveFmt) { CoTaskMemFree(g_eng->pWaveFmt); g_eng->pWaveFmt = nullptr; }
 
-    // Stop WGC — close session then reset context
+    // Stop WGC -- close session then reset context
     if (g_eng->useWGC && g_eng->wgcCtx) {
         try {
             g_eng->wgcCtx->session.Close(); // IClosable::Close()
@@ -1070,23 +1054,6 @@ JCAPI void JC_ForceKeyframe(void)
     if (g_eng) g_eng->forceKey = true;
 }
 
-// Returns raw stereo float32 PCM samples captured since last call.
-// outSampleRate / outChannels receive the native capture format.
-// Returns number of float samples written (frames * channels).
-JCAPI int JC_GetPcmAudio(float* pcmBuf, int maxFloats, int* outSampleRate, int* outChannels)
-{
-    if (!g_eng || !g_eng->initialized || !pcmBuf || maxFloats <= 0) return 0;
-    std::lock_guard<std::mutex> lk(g_eng->pcmOutMtx);
-    if (outSampleRate) *outSampleRate = g_eng->pcmSampleRate;
-    if (outChannels)   *outChannels   = g_eng->pcmChannels;
-    int n = (int)std::min((size_t)maxFloats, g_eng->pcmOutBuf.size());
-    if (n > 0) {
-        memcpy(pcmBuf, g_eng->pcmOutBuf.data(), n * sizeof(float));
-        g_eng->pcmOutBuf.erase(g_eng->pcmOutBuf.begin(), g_eng->pcmOutBuf.begin() + n);
-    }
-    return n;
-}
-
 JCAPI void JC_SetBitrate(int bitrateKbps)
 {
     if (!g_eng || !g_eng->encoder || bitrateKbps <= 0) return;
@@ -1109,6 +1076,75 @@ JCAPI void JC_GetOutputSize(int* width, int* height)
     if (!g_eng) { if (width) *width = 0; if (height) *height = 0; return; }
     if (width)  *width  = g_eng->params.dstWidth;
     if (height) *height = g_eng->params.dstHeight;
+}
+
+JCAPI void JC_GetAudioFormat(int* sampleRate, int* channels)
+{
+    if (sampleRate) *sampleRate = 0;
+    if (channels)   *channels   = 0;
+    if (!g_eng || !g_eng->initialized) return;
+    std::lock_guard<std::mutex> lk(g_eng->audioRawMtx);
+    if (sampleRate) *sampleRate = g_eng->audioRawSr;
+    if (channels)   *channels   = g_eng->audioRawCh;
+}
+
+JCAPI int JC_GetPcmAudio(float* outBuf, int maxFrames, int* outFrames)
+{
+    if (outFrames) *outFrames = 0;
+    if (!g_eng || !g_eng->initialized || !outBuf || maxFrames <= 0) return E_INVALIDARG;
+
+    std::lock_guard<std::mutex> lk(g_eng->audioRawMtx);
+    int ch = g_eng->audioRawCh;
+    if (ch <= 0) return S_OK;
+
+    int available = (int)(g_eng->audioRawBuf.size() / ch);
+    int toRead    = std::min(available, maxFrames);
+    if (toRead <= 0) return S_OK;
+
+    int samples = toRead * ch;
+    for (int i = 0; i < samples; i++)
+        outBuf[i] = g_eng->audioRawBuf[i];
+    g_eng->audioRawBuf.erase(g_eng->audioRawBuf.begin(),
+                              g_eng->audioRawBuf.begin() + samples);
+    if (outFrames) *outFrames = toRead;
+    return S_OK;
+}
+
+JCAPI int JC_SetResolution(int width, int height)
+{
+    if (!g_eng || !g_eng->initialized) return E_FAIL;
+    if (width <= 0 || height <= 0)     return E_INVALIDARG;
+
+    // Clamp to source dimensions
+    if (width  > g_eng->srcWidth)  width  = g_eng->srcWidth;
+    if (height > g_eng->srcHeight) height = g_eng->srcHeight;
+
+    g_eng->params.dstWidth  = width;
+    g_eng->params.dstHeight = height;
+
+    // Flush and reset encoder + video processor
+    if (g_eng->encoder) {
+        g_eng->encoder->ProcessMessage(MFT_MESSAGE_NOTIFY_END_OF_STREAM, 0);
+        g_eng->encoder->ProcessMessage(MFT_MESSAGE_COMMAND_DRAIN, 0);
+        g_eng->encoder.Reset();
+    }
+    g_eng->vpInView.Reset();
+    g_eng->vpOutView.Reset();
+    g_eng->vp.Reset();
+    g_eng->vpEnum.Reset();
+    g_eng->nv12Tex.Reset();
+    g_eng->stagingTex.Reset();
+    g_eng->sampleCount = 0;
+
+    HRESULT hr = InitVideoProcessor(g_eng);
+    if (FAILED(hr)) { LogError("JC_SetResolution: InitVideoProcessor", hr); return hr; }
+    hr = InitEncoder(g_eng);
+    if (FAILED(hr)) { LogError("JC_SetResolution: InitEncoder", hr); return hr; }
+
+    char info[128];
+    snprintf(info, sizeof(info), "[JC] Resolution changed to %dx%d", width, height);
+    LogInfo(info);
+    return S_OK;
 }
 
 JCAPI int JC_EnumEncoders(JC_EncoderInfo* outInfo, int maxCount)

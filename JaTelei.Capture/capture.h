@@ -175,15 +175,35 @@ JCAPI int  JC_CaptureAndEncode(
 JCAPI void JC_ForceKeyframe(void);
 
 /** Dynamically update video bitrate (kbps). */
-// Returns raw stereo float32 PCM samples captured since last call (WASAPI loopback).
-// outSampleRate / outChannels receive the native capture format (e.g. 48000, 2).
-// Returns total float values written (frames × channels); 0 if none available.
-JCAPI int  JC_GetPcmAudio(float* pcmBuf, int maxFloats, int* outSampleRate, int* outChannels);
-
 JCAPI void JC_SetBitrate(int bitrateKbps);
 
 /** Query actual encoded frame dimensions (may differ from requested). */
 JCAPI void JC_GetOutputSize(int* width, int* height);
+
+/**
+ * Query WASAPI audio format (call after JC_Init with enableAudio=1).
+ * Returns the native device sample rate and channel count for the raw PCM buffer.
+ * Returns 0/0 if audio is not enabled or not yet initialized.
+ */
+JCAPI void JC_GetAudioFormat(int* sampleRate, int* channels);
+
+/**
+ * Drain raw float32 interleaved PCM samples from the WASAPI loopback ring buffer.
+ *   outBuf    - caller-allocated float array, capacity = maxFrames * channels
+ *   maxFrames - number of *per-channel* sample frames the buffer holds
+ *   outFrames - [out] number of frames actually written (may be 0)
+ * Returns 0 on success, negative on error.
+ * Thread-safe; non-blocking.
+ */
+JCAPI int  JC_GetPcmAudio(float* outBuf, int maxFrames, int* outFrames);
+
+/**
+ * Dynamically change the encoded output resolution.
+ * Reinitializes the D3D11 video processor and encoder in-place.
+ * Returns 0 on success, negative HRESULT on failure.
+ * CAUTION: briefly pauses video output (1-2 frames) while reinitializing.
+ */
+JCAPI int  JC_SetResolution(int width, int height);
 
 // ---------------------------------------------------------------------------
 // Enumeration helpers (call before JC_Init)
