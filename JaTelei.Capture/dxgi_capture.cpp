@@ -598,24 +598,26 @@ static HRESULT InitEncoder(EngineState* e)
             vgop.vt = VT_UI4; vgop.uintVal = (UINT)e->params.fps;
             ca->SetValue(&CODECAPI_AVEncMPVGOPSize, &vgop);
 
-            // ── Rate control: Quality VBR (definitive fix for pixelation) ──────────
-            // CBR/VBR com bitrate fixo causam "fome de bits": o encoder eleva o QP
-            // para frames complexos e produz macroblocking severo.
-            // Quality VBR (mode=3) ignora o limite de bitrate e usa quantos bits
-            // forem necessários para manter a qualidade alvo — sem macroblocking.
-            // eAVEncCommonRateControlMode_Quality = 3
+            // ── Rate control: Quality VBR ────────────────────────────────────────
+            // eAVEncCommonRateControlMode_Quality = 3: encoder usa quantos bits
+            // forem necessários para manter a qualidade alvo. Sem macroblocking.
             VARIANT vrc; VariantInit(&vrc);
             vrc.vt = VT_UI4; vrc.uintVal = 3;  // Quality VBR
             ca->SetValue(&CODECAPI_AVEncCommonRateControlMode, &vrc);
 
-            // Qualidade alvo 0-100. 80 = excelente para screen share.
-            // Frames estáticos (texto, UI) usam poucos bits naturalmente;
-            // frames com movimento usam mais, sem pixelação.
+            // Qualidade alvo 0-100. 95 = muito alta.
             VARIANT vq; VariantInit(&vq);
-            vq.vt = VT_UI4; vq.uintVal = 80;
+            vq.vt = VT_UI4; vq.uintVal = 95;
             ca->SetValue(&CODECAPI_AVEncCommonQuality, &vq);
 
-            // Min QP: evita desperdício de bits em frames completamente estáticos.
+            // MaxQP = 24: teto ABSOLUTO. Hardware encoders (NVENC/AMF/QSV)
+            // costumam ignorar AVEncCommonQuality mas respeitam MaxQP.
+            // QP > 26 causa macroblocking visivel; 24 garante qualidade alta.
+            VARIANT vmaxqp; VariantInit(&vmaxqp);
+            vmaxqp.vt = VT_UI4; vmaxqp.uintVal = 24;
+            ca->SetValue(&CODECAPI_AVEncVideoMaxQP, &vmaxqp);
+
+            // MinQP = 18: evita desperdicio de bits em frames estaticos.
             VARIANT vminqp; VariantInit(&vminqp);
             vminqp.vt = VT_UI4; vminqp.uintVal = 18;
             ca->SetValue(&CODECAPI_AVEncVideoMinQP, &vminqp);
