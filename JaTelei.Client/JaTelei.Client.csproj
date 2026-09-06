@@ -26,6 +26,7 @@
     <PackageReference Include="System.Drawing.Common"                   Version="8.*" />
     <PackageReference Include="Microsoft.Extensions.Configuration.Json" Version="8.*" />
     <PackageReference Include="Concentus"                               Version="2.2.2" />
+    <PackageReference Include="NAudio"                                  Version="2.2.1" />
     <Resource Include="Resources\app.ico" />
   </ItemGroup>
   <ItemGroup>
