@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.IO;
+using System.Windows.Media.Imaging;
 using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.Json;
@@ -62,7 +63,7 @@ public class WebRtcService : IAsyncDisposable
     private int _framesSent;
     private volatile bool _forceGdiKeyframe;
 
-    private static readonly string LogPath =
+    internal static readonly string LogPath =
         Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
 
     private static void Log(string msg) =>
@@ -100,6 +101,7 @@ public class WebRtcService : IAsyncDisposable
     public event Action<byte[], int, int>? FrameReceived;
     public event Action<string>?           IceCandidateReady;
     public event Action<string>?           IceStateChanged;
+    public event Action<BitmapSource>?     SenderPreviewFrame;
 
     public bool IsConnected =>
         _pc?.iceConnectionState == RTCIceConnectionState.connected;
@@ -174,11 +176,11 @@ public class WebRtcService : IAsyncDisposable
         var player     = new WaveOutPlayer();
         _audioEngine   = new AudioEngine(sendOpus: null, player: player);
 
-        _pc.OnAudioFrameReceived += (ep, ts, payload, fmt) =>
+        _pc.onRtpPacketReceived += (ep, mediaType, rtpPacket) =>
         {
-            // Report PTS for AV sync tracking (convert RTP ts to 100-ns ticks)
-            _avSync.ReportAudio((long)ts * 1000_000L / (fmt.ClockRate > 0 ? fmt.ClockRate : 48000));
-            _audioEngine.OnOpusReceived(payload);
+            if (mediaType != SDPMediaTypesEnum.audio) return;
+            _avSync.ReportAudio((long)rtpPacket.Header.Timestamp * 1_000_000L / 48000);
+            _audioEngine.OnOpusReceived(rtpPacket.Payload);
         };
 
         var audioTrack = new MediaStreamTrack(
@@ -511,6 +513,33 @@ public class WebRtcService : IAsyncDisposable
                                     Log($"SendVideo: {ex.GetType().Name}: {ex.Message}");
                                 }
                             }
+                        }
+
+                        // ── Sender preview (every 15 frames ≈ 2fps at 30fps) ──
+                        if (SenderPreviewFrame != null && (++_previewCount % 15 == 0))
+                        {
+                            try
+                            {
+                                // Lightweight GDI screenshot for preview thumbnail
+                                int scrW = (int)System.Windows.SystemParameters.PrimaryScreenWidth;
+                                int scrH = (int)System.Windows.SystemParameters.PrimaryScreenHeight;
+                                var raw2 = CaptureRegion(0, 0, scrW, scrH, out int pw, out int ph);
+                                if (raw2 != null && pw > 0 && ph > 0)
+                                {
+                                    var bs = System.Windows.Interop.Imaging.CreateBitmapSourceFromMemorySection(
+                                        IntPtr.Zero, pw, ph,
+                                        System.Windows.Media.PixelFormats.Bgra32,
+                                        raw2, pw * 4);
+                                    // Use WriteableBitmap path instead
+                                    var wb = new WriteableBitmap(pw, ph, 96, 96,
+                                        System.Windows.Media.PixelFormats.Bgra32, null);
+                                    wb.WritePixels(new System.Windows.Int32Rect(0, 0, pw, ph), raw2, pw * 4, 0);
+                                    wb.Freeze();
+                                    System.Windows.Application.Current?.Dispatcher.Invoke(
+                                        () => SenderPreviewFrame?.Invoke(wb));
+                                }
+                            }
+                            catch { /* preview is best-effort */ }
                         }
                     }
                     catch (Exception ex)
