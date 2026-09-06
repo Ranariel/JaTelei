@@ -17,10 +17,10 @@ namespace JaTelei.Client.Services;
 //  SENDER PIPELINE (GPU zero-copy, C++ DLL + Opus):
 //    WGC / DXGI DDup → D3D11VP (BGRA→NV12) → NVENC/AMF/QSV → H.264/AV1
 //      → JitterBuffer → RTP SendVideo()
-//    WASAPI PCM (float32) → AudioEngine (Concentus Opus) → RTP SendAudio()
+//    NAudio WasapiLoopback → AudioEngine (Concentus Opus) → RTP SendAudio()
 //
 //  RECEIVER PIPELINE:
-//    RTP H.264 → JitterBuffer → MfH264Decoder → FrameReceived (BGRA)
+//    RTP H.264 → keyframe gate → JitterBuffer → MfH264Decoder → FrameReceived (BGRA)
 //    RTP Opus  → AudioEngine (Concentus decode) → WaveOutPlayer (48kHz stereo)
 //
 //  ADAPTIVE QUALITY:
@@ -57,15 +57,17 @@ public class WebRtcService : IAsyncDisposable
     private readonly AVSyncManager    _avSync      = new();
     private readonly JitterBuffer     _jitterBuf   = new();
 
-    // ── Diagnostics ───────────────────────────────────────────────────────────
+    // ── Diagnostics & state flags ─────────────────────────────────────────────
 
-    private int _framesRecv;
-    private int _framesSent;
+    private int  _framesRecv;
+    private int  _framesSent;
     private volatile bool _forceGdiKeyframe;
-    private int             _previewCount;
+    private volatile bool _requestDllReinit;   // triggers DLL Shutdown+Init → forces IDR
+    private volatile bool _waitingForKeyframe; // receiver drops P-frames until IDR arrives
+    private int  _previewCount;
 
     internal static readonly string LogPath =
-        Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
+        Path.Combine(Path.GetTempPath(), "jatelei_error.txt");
 
     private static void Log(string msg) =>
         File.AppendAllText(LogPath, $"[WebRTC] {DateTime.Now:HH:mm:ss.fff} {msg}\n");
@@ -151,7 +153,7 @@ public class WebRtcService : IAsyncDisposable
             type = RTCSdpType.answer,
             sdp  = sdp
         });
-        ScreenCaptureService.ForceKeyframe();
+        // No longer call ForceKeyframe here — DLL reinit will generate an IDR
         return Task.CompletedTask;
     }
 
@@ -162,8 +164,9 @@ public class WebRtcService : IAsyncDisposable
     public Task<string> CreateAnswerAsync(string offerSdp)
     {
         _pc = new RTCPeerConnection(RtcConfig);
-        _framesRecv = 0;
-        _decoder    = new MfH264Decoder();
+        _framesRecv        = 0;
+        _waitingForKeyframe = true; // drop P-frames until first IDR arrives
+        _decoder           = new MfH264Decoder();
 
         // ── Video receive ─────────────────────────────────────────────────────
         _pc.OnVideoFrameReceived += OnVideoFrameReceived;
@@ -215,16 +218,25 @@ public class WebRtcService : IAsyncDisposable
         try
         {
             var h264 = EnsureAnnexB(frame);
-
-            // Push into jitter buffer with RTP sequence tracking
-            // SIPSorcery v6 exposes sequence number via the RTP timestamp for now;
-            // use a monotonic counter as sequence proxy since SIPSorcery doesn't
-            // expose raw seq on this callback.
-            ushort seq = (ushort)(_framesRecv & 0xFFFF);
-            long   pts = (long)ts * 10_000_000L / 90_000L; // 90kHz RTP → 100-ns ticks
-
-            _jitterBuf.Push(seq, h264, false, pts);
             _framesRecv++;
+
+            // ── Keyframe gate: drop P-frames until first IDR arrives ──────────
+            if (_waitingForKeyframe)
+            {
+                bool hasKey = HasKeyframeNal(h264);
+                if (!hasKey)
+                {
+                    // Give up to ~5 seconds (150 frames at 30fps) then decode anyway
+                    // (encoder may use NVENC intra refresh — all frames NAL type 1)
+                    if (_framesRecv < 150) return;
+                    Log($"WARN: No IDR after {_framesRecv} frames — decoding anyway (intra refresh mode?)");
+                }
+                else
+                {
+                    Log($"First keyframe at recv#{_framesRecv} — decoder sync established");
+                }
+                _waitingForKeyframe = false;
+            }
 
             // Diagnostic logging for first 10 + every 300 frames
             if (_framesRecv <= 10 || _framesRecv % 300 == 0)
@@ -233,7 +245,11 @@ public class WebRtcService : IAsyncDisposable
                 Log($"Recv frame#{_framesRecv} {h264.Length}B NALs=[{nalTypes}]");
             }
 
-            // Drain jitter buffer
+            ushort seq = (ushort)(_framesRecv & 0xFFFF);
+            long   pts = (long)ts * 10_000_000L / 90_000L;
+
+            _jitterBuf.Push(seq, h264, false, pts);
+
             while (_jitterBuf.TryPop(out var jf) && jf != null)
             {
                 _avSync.ReportVideo(jf.Pts);
@@ -318,39 +334,25 @@ public class WebRtcService : IAsyncDisposable
             if (isSender)
             {
                 _forceGdiKeyframe = true;
-                Log("ICE connected");
+                _requestDllReinit = true; // restart DLL encoder → IDR as very first frame
+                Log("ICE connected — DLL reinit scheduled for IDR");
 
-                // Force IDR keyframe: call immediately then retry every 500ms for 5s
-                // so the receiver always starts from a clean IDR even if the first call
-                // races ahead of the DLL encoder being ready.
-                _ = Task.Run(async () =>
-                {
-                    for (int k = 0; k < 10; k++)
-                    {
-                        ScreenCaptureService.ForceKeyframe();
-                        Log($"ForceKeyframe #{k + 1}/10");
-                        await Task.Delay(500).ConfigureAwait(false);
-                    }
-                });
-
-                // Start audio sender: wait up to 10s for DLL init + AudioEngine creation.
-                // _audioEngine is set inside StartCapture's Task.Run which may not have
-                // finished yet when ICE fires — do NOT use _audioEngine != null as the
-                // loop condition or the loop exits immediately when it's still null.
+                // Start audio sender: _audioEngine is created unconditionally (NAudio
+                // doesn't need DLL), so it should be available almost immediately.
                 _ = Task.Run(async () =>
                 {
                     for (int i = 0; i < 100; i++)
                     {
                         var eng = _audioEngine;
-                        if (eng != null && ScreenCaptureService.IsInitialized)
+                        if (eng != null)
                         {
                             eng.StartSender();
-                            Log("Audio sender started after ICE connect");
+                            Log("Audio sender started after ICE connect (NAudio loopback)");
                             return;
                         }
                         await Task.Delay(100).ConfigureAwait(false);
                     }
-                    Log("WARN: audio sender never started — DLL/AudioEngine not ready after 10s");
+                    Log("WARN: audio sender never started — AudioEngine not ready after 10s");
                 });
             }
         };
@@ -376,22 +378,35 @@ public class WebRtcService : IAsyncDisposable
         {
             bool dllReady = false;
 
+            // Extract hwnd/dstH before the while loop so DLL reinit can reference them
+            IntPtr hwnd = target?.WindowHandle ?? IntPtr.Zero;
+            int    dstH = targetHeight > 0 ? targetHeight : 0;
+
+            // ── Audio engine (sender side) — created unconditionally ──────────
+            // NAudio doesn't depend on the DLL, so create it right away.
+            {
+                const uint opusRtpDuration = 960; // 20ms @ 48kHz
+                Action<byte[]> sendOpus = payload =>
+                {
+                    try { _pc?.SendAudio(opusRtpDuration, payload); }
+                    catch { /* ignore transient send errors */ }
+                };
+                _audioEngine = new AudioEngine(sendOpus: sendOpus, player: null);
+            }
+
             // ── DLL init ──────────────────────────────────────────────────────
             try
             {
-                IntPtr hwnd = target?.WindowHandle ?? IntPtr.Zero;
-                int dstH    = targetHeight > 0 ? targetHeight : 0;
-
                 dllReady = ScreenCaptureService.Initialize(
-                    dstWidth:     0,
-                    dstHeight:    dstH,
-                    fps:          effectiveFps,
-                    bitrateKbps:  bitrateKbps,
-                    windowHandle: hwnd,
-                    captureMode:  JcCaptureMode.Auto,
-                    codec:        JcCodec.H264,
+                    dstWidth:      0,
+                    dstHeight:     dstH,
+                    fps:           effectiveFps,
+                    bitrateKbps:   bitrateKbps,
+                    windowHandle:  hwnd,
+                    captureMode:   JcCaptureMode.Auto,
+                    codec:         JcCodec.H264,
                     encoderVendor: JcEncoderVendor.Auto,
-                    enableAudio:  true);   // ← ENABLED for Opus path
+                    enableAudio:   true);
 
                 Log(dllReady
                     ? $"DLL OK ({ScreenCaptureService.OutputWidth}x{ScreenCaptureService.OutputHeight})"
@@ -407,30 +422,14 @@ public class WebRtcService : IAsyncDisposable
             {
                 _adaptive = new AdaptiveController();
                 _adaptive.Attach(_pc);
-                // Start at HIGH profile (720p) — avoid risk of 1080p pixelation on startup
                 _adaptive.ForceProfile((int)2); // HIGH = index 2
             }
 
-            // ── Audio engine (sender side) ────────────────────────────────────
-            if (dllReady)
-            {
-                // Opus RTP duration: 20ms @ 48kHz → 960 samples per channel
-                // SIPSorcery RTP clock for Opus is 48000Hz, so duration = 960 units
-                const uint opusRtpDuration = 960;
-                Action<byte[]> sendOpus = payload =>
-                {
-                    try { _pc?.SendAudio(opusRtpDuration, payload); }
-                    catch { /* ignore transient send errors */ }
-                };
-                _audioEngine = new AudioEngine(sendOpus: sendOpus, player: null);
-                // StartSender will be triggered from WireOnConnected once ICE connects.
-            }
-
             // ── GDI fallback encoder ──────────────────────────────────────────
-            MfH264Encoder? gdiEncoder      = null;
-            bool            gdiEncoderFailed = false;
-            int             encW = 0, encH = 0;
-            ushort          txSeq = 0;
+            MfH264Encoder? gdiEncoder       = null;
+            bool           gdiEncoderFailed = false;
+            int            encW = 0, encH = 0;
+            ushort         txSeq = 0;
             _framesSent = 0;
 
             try
@@ -440,7 +439,27 @@ public class WebRtcService : IAsyncDisposable
                     var t0 = DateTime.UtcNow;
                     try
                     {
-                        byte[]? h264 = null;
+                        // ── DLL reinit to force IDR (set by WireOnConnected) ──
+                        if (_requestDllReinit && dllReady)
+                        {
+                            _requestDllReinit = false;
+                            Log("DLL reinit requested — restarting encoder to force IDR");
+                            ScreenCaptureService.Shutdown();
+                            await Task.Delay(80).ConfigureAwait(false);
+                            dllReady = ScreenCaptureService.Initialize(
+                                dstWidth:      0,
+                                dstHeight:     dstH,
+                                fps:           effectiveFps,
+                                bitrateKbps:   bitrateKbps,
+                                windowHandle:  hwnd,
+                                captureMode:   JcCaptureMode.Auto,
+                                codec:         JcCodec.H264,
+                                encoderVendor: JcEncoderVendor.Auto,
+                                enableAudio:   true);
+                            Log(dllReady ? "DLL reinit OK — IDR frame incoming" : "DLL reinit FAILED — using GDI");
+                        }
+
+                        byte[]? h264  = null;
                         bool    isKey = false;
 
                         if (dllReady)
@@ -512,12 +531,10 @@ public class WebRtcService : IAsyncDisposable
 
                         if (h264?.Length > 0)
                         {
-                            // Push into jitter buffer before sending
-                            long pts = (long)(DateTime.UtcNow.Ticks - 621355968000000000L) * 100L; // UTC→100ns
+                            long pts = (long)(DateTime.UtcNow.Ticks - 621355968000000000L) * 100L;
                             _jitterBuf.Push(txSeq++, h264, isKey, pts);
                             _avSync.ReportVideo(pts);
 
-                            // Send immediately (jitter buffer is for reorder protection, not delay)
                             while (_jitterBuf.TryPop(out var jf) && jf != null)
                             {
                                 try
@@ -525,7 +542,6 @@ public class WebRtcService : IAsyncDisposable
                                     _pc?.SendVideo(rtpDuration, jf.Data);
                                     _framesSent++;
 
-                                    // Log NAL types for first 15 frames + every 300 to verify IDR is sent
                                     if (_framesSent <= 15 || _framesSent % 300 == 0)
                                     {
                                         var nalTypes = DetectNalTypes(jf.Data);
@@ -544,7 +560,6 @@ public class WebRtcService : IAsyncDisposable
                         {
                             try
                             {
-                                // Lightweight GDI screenshot for preview thumbnail
                                 int scrW = (int)System.Windows.SystemParameters.PrimaryScreenWidth;
                                 int scrH = (int)System.Windows.SystemParameters.PrimaryScreenHeight;
                                 var raw2 = CaptureRegion(0, 0, scrW, scrH, out int pw, out int ph);
@@ -668,6 +683,30 @@ public class WebRtcService : IAsyncDisposable
             else i++;
         }
         return sb.Length > 0 ? sb.ToString() : "?";
+    }
+
+    private static bool HasKeyframeNal(byte[] data)
+    {
+        int i = 0;
+        while (i < data.Length - 4)
+        {
+            int adv = 0, nalByte = -1;
+            if (data[i] == 0 && data[i+1] == 0 && data[i+2] == 0 && data[i+3] == 1)
+            { adv = 4; if (i + 4 < data.Length) nalByte = data[i + 4]; }
+            else if (data[i] == 0 && data[i+1] == 0 && data[i+2] == 1)
+            { adv = 3; if (i + 3 < data.Length) nalByte = data[i + 3]; }
+            if (adv > 0)
+            {
+                if (nalByte >= 0)
+                {
+                    int t = nalByte & 0x1F;
+                    if (t == 5 || t == 7) return true; // IDR or SPS → keyframe
+                }
+                i += adv;
+            }
+            else i++;
+        }
+        return false;
     }
 
     private static byte[] EnsureAnnexB(byte[] data)
