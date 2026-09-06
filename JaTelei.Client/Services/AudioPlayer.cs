@@ -6,13 +6,14 @@ using System.Threading;
 namespace JaTelei.Client.Services;
 
 /// <summary>
-/// Minimal G711 µ-law (PCMU) → WaveOut player.
-/// Decodes PCMU frames received via WebRTC and streams them to the default audio device.
-/// Uses only Win32 waveOut P/Invoke — no extra NuGet dependencies.
+/// G711 µ-law (PCMU) → WaveOut player using Win32 P/Invoke only.
 ///
-/// Deliberately uses WAVE_FORMAT_PCM (not WAVE_FORMAT_MULAW) because the G.711 ACM
-/// codec required by MULAW waveOut is not guaranteed to be present on all Windows
-/// installations. We decode µ-law → PCM16 in software instead.
+/// Key design:
+/// - Decodes µ-law → PCM16 in software (no ACM G.711 codec required).
+/// - WAVEHDR and PCM data live in unmanaged heap memory so their addresses
+///   remain valid after Play() returns and while waveOut still uses them.
+/// - Time-based unprepare: sleeps for the buffer duration + margin instead
+///   of polling WHDR_DONE on a stack copy of the header (which is wrong).
 /// </summary>
 internal static class AudioPlayer
 {
@@ -44,13 +45,13 @@ internal static class AudioPlayer
     }
 
     private const ushort WAVE_FORMAT_PCM = 1;
-    private const uint   WHDR_DONE       = 0x00000001;
     private const int    WAVE_MAPPER     = -1;
 
+    // Use IntPtr overloads so we can pass unmanaged memory (not ref to a stack struct)
     [DllImport("winmm.dll")] private static extern int waveOutOpen(out IntPtr hwo, int id, ref WAVEFORMATEX fmt, IntPtr cb, IntPtr inst, uint flags);
-    [DllImport("winmm.dll")] private static extern int waveOutPrepareHeader(IntPtr hwo, ref WAVEHDR hdr, int size);
-    [DllImport("winmm.dll")] private static extern int waveOutWrite(IntPtr hwo, ref WAVEHDR hdr, int size);
-    [DllImport("winmm.dll")] private static extern int waveOutUnprepareHeader(IntPtr hwo, ref WAVEHDR hdr, int size);
+    [DllImport("winmm.dll")] private static extern int waveOutPrepareHeader(IntPtr hwo, IntPtr hdr, int size);
+    [DllImport("winmm.dll")] private static extern int waveOutWrite(IntPtr hwo, IntPtr hdr, int size);
+    [DllImport("winmm.dll")] private static extern int waveOutUnprepareHeader(IntPtr hwo, IntPtr hdr, int size);
     [DllImport("winmm.dll")] private static extern int waveOutClose(IntPtr hwo);
 
     // ── State ─────────────────────────────────────────────────────────────────
@@ -58,81 +59,82 @@ internal static class AudioPlayer
     private static readonly object _lock = new();
     private static IntPtr  _hwo   = IntPtr.Zero;
     private static bool    _ready;
+    private static int     _hdrSize = Marshal.SizeOf<WAVEHDR>();
 
     // ── Public API ────────────────────────────────────────────────────────────
 
     /// <summary>
-    /// Queues a raw PCMU (G711 µ-law) frame for playback.
-    /// Thread-safe; safe to call from the WebRTC receive callback.
+    /// Queues one PCMU frame for playback. Thread-safe.
     /// </summary>
     public static void Play(byte[] pcmu)
     {
         if (pcmu == null || pcmu.Length == 0) return;
 
+        // Open device lazily; capture handle under lock
+        IntPtr hwo;
         lock (_lock)
         {
             if (!_ready) OpenDevice();
             if (!_ready) return;
-
-            // Decode µ-law → 16-bit PCM in software (no ACM codec needed)
-            var pcm16 = new short[pcmu.Length];
-            for (int i = 0; i < pcmu.Length; i++)
-                pcm16[i] = MuLawTable[pcmu[i]];
-
-            // Pin the PCM buffer and queue it via waveOut
-            var gcPin = GCHandle.Alloc(pcm16, GCHandleType.Pinned);
-            var hdr   = new WAVEHDR
-            {
-                lpData         = gcPin.AddrOfPinnedObject(),
-                dwBufferLength = (uint)(pcm16.Length * 2),  // bytes = samples × 2 (16-bit)
-            };
-            int sz = Marshal.SizeOf<WAVEHDR>();
-            waveOutPrepareHeader(_hwo, ref hdr, sz);
-            waveOutWrite(_hwo, ref hdr, sz);
-
-            // Unprepare asynchronously once WaveOut is done with the buffer
-            ThreadPool.QueueUserWorkItem(_ =>
-            {
-                // Poll until done (WHDR_DONE) — typical latency < 10 ms at 8 kHz
-                int spins = 0;
-                while ((hdr.dwFlags & WHDR_DONE) == 0 && spins++ < 500)
-                    Thread.Sleep(2);
-                waveOutUnprepareHeader(_hwo, ref hdr, sz);
-                gcPin.Free();
-            });
+            hwo = _hwo;
         }
+
+        // Decode µ-law → PCM16 (no ACM codec needed)
+        int samples  = pcmu.Length;
+        int pcmBytes = samples * 2;
+
+        // Allocate PCM buffer in unmanaged heap — stable address for waveOut
+        IntPtr pcmPtr = Marshal.AllocHGlobal(pcmBytes);
+        unsafe
+        {
+            short* dst = (short*)pcmPtr;
+            for (int i = 0; i < samples; i++)
+                dst[i] = MuLawTable[pcmu[i]];
+        }
+
+        // Allocate WAVEHDR in unmanaged heap — stable address for waveOut
+        IntPtr hdrPtr = Marshal.AllocHGlobal(_hdrSize);
+        {
+            var h = new WAVEHDR { lpData = pcmPtr, dwBufferLength = (uint)pcmBytes };
+            Marshal.StructureToPtr(h, hdrPtr, false);
+        }
+
+        waveOutPrepareHeader(hwo, hdrPtr, _hdrSize);
+        waveOutWrite(hwo, hdrPtr, _hdrSize);
+
+        // Free after playback: sleep for the buffer duration + 80 ms margin.
+        // We must NOT free before waveOut finishes with the buffer.
+        int waitMs = samples * 1000 / 8000 + 80;
+        ThreadPool.QueueUserWorkItem(_ =>
+        {
+            Thread.Sleep(waitMs);
+            waveOutUnprepareHeader(hwo, hdrPtr, _hdrSize);
+            Marshal.FreeHGlobal(pcmPtr);
+            Marshal.FreeHGlobal(hdrPtr);
+        });
     }
 
     // ── Private ───────────────────────────────────────────────────────────────
 
     private static void OpenDevice()
     {
-        // PCM, 8 kHz, mono, 16-bit — supported by every Windows audio driver
         var fmt = new WAVEFORMATEX
         {
             wFormatTag      = WAVE_FORMAT_PCM,
             nChannels       = 1,
             nSamplesPerSec  = 8000,
-            nAvgBytesPerSec = 8000 * 2,    // 2 bytes per sample
-            nBlockAlign     = 2,            // 1 channel × 2 bytes
+            nAvgBytesPerSec = 16000,   // 8000 samples/s × 2 bytes
+            nBlockAlign     = 2,       // 1 ch × 2 bytes
             wBitsPerSample  = 16,
             cbSize          = 0,
         };
         int hr = waveOutOpen(out _hwo, WAVE_MAPPER, ref fmt, IntPtr.Zero, IntPtr.Zero, 0);
         _ready = (hr == 0);
-        if (!_ready)
-            File.AppendAllText(WebRtcService.LogPath,
-                $"[AudioPlayer] {DateTime.Now}: waveOutOpen WAVE_FORMAT_PCM failed hr={hr}\n");
-        else
-            File.AppendAllText(WebRtcService.LogPath,
-                $"[AudioPlayer] {DateTime.Now}: waveOutOpen OK (PCM 8kHz mono 16-bit)\n");
+        File.AppendAllText(WebRtcService.LogPath,
+            $"[AudioPlayer] {DateTime.Now}: waveOutOpen hr={hr} ready={_ready}\n");
     }
 
     // ── ITU-T G.711 µ-law decode table ────────────────────────────────────────
-    // Built once at startup. Formula verified against the ITU-T reference:
-    //   v  = ~byte & 0xFF  (invert all bits)
-    //   x  = ((mantissa << 3) + 0x84) << exponent
-    //   out = positive if sign bit set, negative otherwise (offset by 0x84 bias)
     private static readonly short[] MuLawTable = BuildMuLawTable();
     private static short[] BuildMuLawTable()
     {
