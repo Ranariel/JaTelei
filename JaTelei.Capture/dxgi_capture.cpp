@@ -598,27 +598,26 @@ static HRESULT InitEncoder(EngineState* e)
             vgop.vt = VT_UI4; vgop.uintVal = (UINT)e->params.fps;
             ca->SetValue(&CODECAPI_AVEncMPVGOPSize, &vgop);
 
-            // Max QP: cap at 35 — prevents the encoder from producing extreme blockiness
-            // under motion bursts; supported on Intel QSV and MS software H264 encoder.
-            VARIANT vqp; VariantInit(&vqp);
-            vqp.vt = VT_UI8; vqp.ullVal = 35;
-            ca->SetValue(&CODECAPI_AVEncVideoEncodeQP, &vqp);  // hint, not hard cap on all HW
-
-            // CBR (Constant Bit Rate) — encoder distributes bits uniformly across every
-            // row of every frame. Without this (default VBR), the encoder may spend its
-            // bit budget on the top rows of a high-motion frame and fall back to very
-            // high QP (extreme macroblocking) for the bottom rows.
-            // eAVEncCommonRateControlMode_CBR = 0
+            // ── Rate control: Quality VBR (definitive fix for pixelation) ──────────
+            // CBR/VBR com bitrate fixo causam "fome de bits": o encoder eleva o QP
+            // para frames complexos e produz macroblocking severo.
+            // Quality VBR (mode=3) ignora o limite de bitrate e usa quantos bits
+            // forem necessários para manter a qualidade alvo — sem macroblocking.
+            // eAVEncCommonRateControlMode_Quality = 3
             VARIANT vrc; VariantInit(&vrc);
-            vrc.vt = VT_UI4; vrc.uintVal = 0;  // CBR
+            vrc.vt = VT_UI4; vrc.uintVal = 3;  // Quality VBR
             ca->SetValue(&CODECAPI_AVEncCommonRateControlMode, &vrc);
 
-            // Min/max QP: hard floor and ceiling for rate control.
-            // Even in CBR mode, some hardware encoders allow QP to spike during
-            // scene cuts. Clamping to [20, 35] keeps quality stable.
-            // eAVEncVideoEncodeQP carries the max; use eAVEncVideoMinQP for floor.
+            // Qualidade alvo 0-100. 80 = excelente para screen share.
+            // Frames estáticos (texto, UI) usam poucos bits naturalmente;
+            // frames com movimento usam mais, sem pixelação.
+            VARIANT vq; VariantInit(&vq);
+            vq.vt = VT_UI4; vq.uintVal = 80;
+            ca->SetValue(&CODECAPI_AVEncCommonQuality, &vq);
+
+            // Min QP: evita desperdício de bits em frames completamente estáticos.
             VARIANT vminqp; VariantInit(&vminqp);
-            vminqp.vt = VT_UI4; vminqp.uintVal = 20;
+            vminqp.vt = VT_UI4; vminqp.uintVal = 18;
             ca->SetValue(&CODECAPI_AVEncVideoMinQP, &vminqp);
         }
     }
