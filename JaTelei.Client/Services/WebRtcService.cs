@@ -317,22 +317,40 @@ public class WebRtcService : IAsyncDisposable
 
             if (isSender)
             {
-                ScreenCaptureService.ForceKeyframe();
                 _forceGdiKeyframe = true;
-                Log("ICE connected → ForceKeyframe()");
+                Log("ICE connected");
 
-                // Start audio sender (needs DLL to be initialized first — poll briefly)
+                // Force IDR keyframe: call immediately then retry every 500ms for 5s
+                // so the receiver always starts from a clean IDR even if the first call
+                // races ahead of the DLL encoder being ready.
                 _ = Task.Run(async () =>
                 {
-                    for (int i = 0; i < 20 && _audioEngine != null; i++)
+                    for (int k = 0; k < 10; k++)
                     {
-                        if (ScreenCaptureService.IsInitialized)
+                        ScreenCaptureService.ForceKeyframe();
+                        Log($"ForceKeyframe #{k + 1}/10");
+                        await Task.Delay(500).ConfigureAwait(false);
+                    }
+                });
+
+                // Start audio sender: wait up to 10s for DLL init + AudioEngine creation.
+                // _audioEngine is set inside StartCapture's Task.Run which may not have
+                // finished yet when ICE fires — do NOT use _audioEngine != null as the
+                // loop condition or the loop exits immediately when it's still null.
+                _ = Task.Run(async () =>
+                {
+                    for (int i = 0; i < 100; i++)
+                    {
+                        var eng = _audioEngine;
+                        if (eng != null && ScreenCaptureService.IsInitialized)
                         {
-                            _audioEngine.StartSender();
-                            break;
+                            eng.StartSender();
+                            Log("Audio sender started after ICE connect");
+                            return;
                         }
                         await Task.Delay(100).ConfigureAwait(false);
                     }
+                    Log("WARN: audio sender never started — DLL/AudioEngine not ready after 10s");
                 });
             }
         };
@@ -506,8 +524,13 @@ public class WebRtcService : IAsyncDisposable
                                 {
                                     _pc?.SendVideo(rtpDuration, jf.Data);
                                     _framesSent++;
-                                    if (_framesSent == 1)
-                                        Log($"First frame sent ({jf.Data.Length}B)");
+
+                                    // Log NAL types for first 15 frames + every 300 to verify IDR is sent
+                                    if (_framesSent <= 15 || _framesSent % 300 == 0)
+                                    {
+                                        var nalTypes = DetectNalTypes(jf.Data);
+                                        Log($"Sent frame#{_framesSent} {jf.Data.Length}B NALs=[{nalTypes}] key={isKey}");
+                                    }
                                 }
                                 catch (Exception ex)
                                 {
