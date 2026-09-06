@@ -184,10 +184,11 @@ public class WebRtcService : IAsyncDisposable
         _pc.addTrack(videoTrack);
 
         // Audio track: PCMU (G711 µ-law, 8 kHz)
-        _pc.OnAudioFrameReceived += (IPEndPoint ep, uint ts, byte[] frame, AudioFormat fmt) =>
+        // SIPSorcery uses OnRtpPacketReceived for both audio and video raw packets
+        _pc.OnRtpPacketReceived += (IPEndPoint ep, SDPMediaTypesEnum kind, RTPPacket pkt) =>
         {
-            // Decode G711 PCMU → 16-bit PCM → play via WaveOut
-            AudioPlayer.Play(frame);
+            if (kind == SDPMediaTypesEnum.audio && pkt.Payload?.Length > 0)
+                AudioPlayer.Play(pkt.Payload);
         };
 
         var audioTrackR = new MediaStreamTrack(
