@@ -62,6 +62,7 @@ public class WebRtcService : IAsyncDisposable
     private int _framesRecv;
     private int _framesSent;
     private volatile bool _forceGdiKeyframe;
+    private int             _previewCount;
 
     internal static readonly string LogPath =
         Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
@@ -176,7 +177,7 @@ public class WebRtcService : IAsyncDisposable
         var player     = new WaveOutPlayer();
         _audioEngine   = new AudioEngine(sendOpus: null, player: player);
 
-        _pc.onRtpPacketReceived += (ep, mediaType, rtpPacket) =>
+        _pc.OnRtpPacketReceived += (ep, mediaType, rtpPacket) =>
         {
             if (mediaType != SDPMediaTypesEnum.audio) return;
             _avSync.ReportAudio((long)rtpPacket.Header.Timestamp * 1_000_000L / 48000);
@@ -526,11 +527,6 @@ public class WebRtcService : IAsyncDisposable
                                 var raw2 = CaptureRegion(0, 0, scrW, scrH, out int pw, out int ph);
                                 if (raw2 != null && pw > 0 && ph > 0)
                                 {
-                                    var bs = System.Windows.Interop.Imaging.CreateBitmapSourceFromMemorySection(
-                                        IntPtr.Zero, pw, ph,
-                                        System.Windows.Media.PixelFormats.Bgra32,
-                                        raw2, pw * 4);
-                                    // Use WriteableBitmap path instead
                                     var wb = new WriteableBitmap(pw, ph, 96, 96,
                                         System.Windows.Media.PixelFormats.Bgra32, null);
                                     wb.WritePixels(new System.Windows.Int32Rect(0, 0, pw, ph), raw2, pw * 4, 0);
