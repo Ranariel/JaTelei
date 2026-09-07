@@ -11,14 +11,24 @@ namespace JaTelei.Client;
 
 public partial class MainWindow : Window
 {
-    private static readonly string LogPath = Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
+    private static readonly string LogPath = Path.Combine(Path.GetTempPath(), "jatelei_error.txt");
     private readonly ApiService _api = new();
     private readonly SignalingService _signaling = new();
     private UpdateService.UpdateInfo? _pendingUpdate;
 
     // Track the active sender so we can stop it and show self-preview
-    private WebRtcService? _currentSenderService;
+    private WebRtcService?  _currentSenderService;
     private FriendsViewModel? _currentFriendsVm;
+
+    // Auto-restart: remember the current send target for ICE reconnects
+    private Friend?      _currentSendFriend;
+    private ShareTarget? _currentSendTarget;
+    private int          _senderRestartCount;
+    private const int    MaxSenderRestarts = 8;
+
+    // Auto-reconnect receiver: track which sender we are currently receiving from
+    private string?  _activeReceiverFromUserId;
+    private Action?  _disposeActiveReceiver;
 
     public MainWindow()
     {
@@ -185,6 +195,10 @@ public partial class MainWindow : Window
         // Stop any previous transmission before starting a new one
         StopCurrentSender();
 
+        // Remember for auto-restart
+        _currentSendFriend = friend;
+        _currentSendTarget = target;
+
         var webRtc = new WebRtcService();
         _currentSenderService = webRtc;
 
@@ -245,7 +259,31 @@ public partial class MainWindow : Window
                 if (ReferenceEquals(_currentSenderService, webRtc))
                 {
                     _currentSenderService = null;
-                    Dispatcher.Invoke(() => _currentFriendsVm?.OnSharingStopped());
+
+                    // Auto-restart on ICE failure (keeps sharing alive through NAT timeouts)
+                    if (state == "failed"
+                        && _currentSendFriend  is { } f
+                        && _currentSendTarget  is { } t
+                        && _senderRestartCount < MaxSenderRestarts)
+                    {
+                        _senderRestartCount++;
+                        File.AppendAllText(LogPath,
+                            $"[Sender] {DateTime.Now}: ICE falhou — auto-restart #{_senderRestartCount} em 2s\n");
+
+                        _ = Task.Run(async () =>
+                        {
+                            await Task.Delay(2000).ConfigureAwait(false);
+                            await Dispatcher.InvokeAsync(() => _ = StartSendingAsync(f, t));
+                        });
+                    }
+                    else
+                    {
+                        // User explicitly stopped or max restarts reached
+                        _currentSendFriend  = null;
+                        _currentSendTarget  = null;
+                        _senderRestartCount = 0;
+                        Dispatcher.Invoke(() => _currentFriendsVm?.OnSharingStopped());
+                    }
                 }
             }
         };
@@ -253,6 +291,10 @@ public partial class MainWindow : Window
 
     private void OnStopShareRequested()
     {
+        // Clear reconnect state so auto-restart doesn't fire
+        _currentSendFriend  = null;
+        _currentSendTarget  = null;
+        _senderRestartCount = 0;
         StopCurrentSender();
     }
 
@@ -284,6 +326,22 @@ public partial class MainWindow : Window
         };
         _signaling.IceCandidateReceived += iceCandReceivedHandler;
 
+        // Auto-reconnect: if we already have an active session with this sender,
+        // silently replace it (no dialog) — the sender restarted after ICE failure.
+        if (fromUserId == _activeReceiverFromUserId)
+        {
+            File.AppendAllText(LogPath,
+                $"[Recv] {DateTime.Now}: re-oferta de {fromUserId} — auto-reconexão sem dialog\n");
+
+            var disposeOld = _disposeActiveReceiver;
+            _disposeActiveReceiver        = null;
+            _activeReceiverFromUserId     = null;
+            disposeOld?.Invoke();
+
+            _ = StartReceivingAsync(fromUserId, offerSdp, webRtc, iceCandReceivedHandler);
+            return;
+        }
+
         Dispatcher.Invoke(() =>
         {
             var result = MessageBox.Show(
@@ -308,11 +366,23 @@ public partial class MainWindow : Window
         WebRtcService webRtc,
         Action<string, string> iceCandReceivedHandler)
     {
+        // Mark this as the active receiver session so re-offers auto-reconnect
+        _activeReceiverFromUserId = fromUserId;
+
         var vm = new ReceiveViewModel(webRtc, _signaling, fromUserId);
-        vm.StopRequested += () =>
+
+        // Store a disposer so OnOfferReceived can tear down this session on reconnect
+        _disposeActiveReceiver = () =>
         {
             _signaling.IceCandidateReceived -= iceCandReceivedHandler;
-            // Dispõe via ViewModel (que desinscreve seus próprios handlers corretamente)
+            _ = vm.DisposeAsync().AsTask();
+        };
+
+        vm.StopRequested += () =>
+        {
+            _activeReceiverFromUserId = null;
+            _disposeActiveReceiver    = null;
+            _signaling.IceCandidateReceived -= iceCandReceivedHandler;
             _ = vm.DisposeAsync().AsTask();
             Dispatcher.Invoke(ShowFriends);
         };

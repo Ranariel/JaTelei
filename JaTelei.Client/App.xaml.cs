@@ -10,7 +10,7 @@ namespace JaTelei.Client;
 public partial class App : Application
 {
     private static readonly string LogPath =
-        Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
+        Path.Combine(Path.GetTempPath(), "jatelei_error.txt");
 
     public static IConfiguration Config { get; private set; } = null!;
 

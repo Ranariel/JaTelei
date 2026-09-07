@@ -18,7 +18,7 @@ public partial class ReceiveViewModel : ObservableObject, IAsyncDisposable
     private readonly Action<string> _iceCandidateReadyHandler;
 
     private static readonly string LogPath =
-        Path.Combine(Path.GetTempPath(), "jaclipei_error.txt");
+        Path.Combine(Path.GetTempPath(), "jatelei_error.txt");
 
     [ObservableProperty] private WriteableBitmap? _frame;
     [ObservableProperty] private string _statusText  = "Conectando…";
