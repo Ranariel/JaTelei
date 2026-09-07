@@ -63,8 +63,6 @@ public class WebRtcService : IAsyncDisposable
     // RTP timestamps start at a random offset; we subtract the first-seen
     // value so both audio and video PTS begin at 0 and AVSyncManager sees
     // real relative drift rather than a huge constant offset.
-    private uint _firstVideoRtpTs = uint.MaxValue;
-    private uint _firstAudioRtpTs = uint.MaxValue;
 
     internal static readonly string LogPath =
         Path.Combine(Path.GetTempPath(), "jatelei_error.txt");
@@ -162,8 +160,6 @@ public class WebRtcService : IAsyncDisposable
     {
         _pc = new RTCPeerConnection(RtcConfig);
         _framesRecv        = 0;
-        _firstVideoRtpTs   = uint.MaxValue;
-        _firstAudioRtpTs   = uint.MaxValue;
         _decoder           = new MfH264Decoder();
 
         // ── Video receive ─────────────────────────────────────────────────────
@@ -182,15 +178,6 @@ public class WebRtcService : IAsyncDisposable
         {
             if (mediaType != SDPMediaTypesEnum.audio) return;
 
-            // Normalise: subtract first-seen RTP timestamp so PTS starts at 0.
-            // AVSyncManager expects 100-ns ticks (10 000 = 1 ms).
-            // 48 kHz Opus clock: 1 tick = 1/48000 s = 20 833 ns ≈ 208.33 100ns-ticks
-            uint rawTs = rtpPacket.Header.Timestamp;
-            if (_firstAudioRtpTs == uint.MaxValue) _firstAudioRtpTs = rawTs;
-            uint delta = rawTs - _firstAudioRtpTs; // handles 32-bit wraparound
-            long audioPts = (long)delta * 10_000_000L / 48_000L;
-
-            _avSync.ReportAudio(audioPts);
             _audioEngine.OnOpusReceived(rtpPacket.Payload);
         };
 
@@ -199,12 +186,6 @@ public class WebRtcService : IAsyncDisposable
             MediaStreamStatusEnum.RecvOnly);
         _pc.addTrack(audioTrack);
 
-        // ── AV sync handlers ─────────────────────────────────────────────────
-        // OnDiscontinuity: log only — do NOT flush jitter buffer.
-        // Flushing on every perceived discontinuity caused the jitter buffer to
-        // be cleared dozens of times per second due to mismatched PTS units in v1.0.143.
-        _avSync.OnDrift         += driftMs => Log($"AV drift: {driftMs:+0.0;-0.0}ms");
-        _avSync.OnDiscontinuity += ()      => Log("AV discontinuity detected (logged only — no flush)");
 
         WireIceEvents("Recv");
         WireOnConnected(isSender: false);
@@ -230,14 +211,7 @@ public class WebRtcService : IAsyncDisposable
             var h264 = EnsureAnnexB(frame);
             _framesRecv++;
 
-            // Normalise RTP timestamp → 100-ns ticks relative to stream start.
-            // NVENC uses intra-refresh (all frames are P-type at NAL level), so
-            // we decode from the very first frame and let intra-refresh heal the
-            // picture over the first N frames. Waiting for an IDR (as in v1.0.143)
-            // only wastes 5 seconds and then starts decoding from a worse position.
-            if (_firstVideoRtpTs == uint.MaxValue) _firstVideoRtpTs = ts;
-            uint   delta  = ts - _firstVideoRtpTs;
-            long   pts    = (long)delta * 10_000_000L / 90_000L;
+            long   pts    = (long)ts * 10_000_000L / 90_000L;
             ushort seq    = (ushort)(_framesRecv & 0xFFFF);
 
             // Diagnostic logging for first 10 + every 300 frames
@@ -251,7 +225,6 @@ public class WebRtcService : IAsyncDisposable
 
             while (_jitterBuf.TryPop(out var jf) && jf != null)
             {
-                _avSync.ReportVideo(jf.Pts);
                 var (bgra, w, h) = _decoder!.Decode(jf.Data);
                 if (bgra != null)
                     FrameReceived?.Invoke(bgra, w, h);
