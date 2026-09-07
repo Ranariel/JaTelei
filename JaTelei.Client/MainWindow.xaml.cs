@@ -195,7 +195,10 @@ public partial class MainWindow : Window
         // Stop any previous transmission before starting a new one
         StopCurrentSender();
 
-        // Remember for auto-restart
+        // Remember for auto-restart; reset counter only on user-initiated share
+        // (restart path keeps the existing count so it increments properly)
+        if (_senderRestartCount == 0 || _currentSendFriend?.Id != friend.Id)
+            _senderRestartCount = 0;
         _currentSendFriend = friend;
         _currentSendTarget = target;
 
@@ -336,6 +339,9 @@ public partial class MainWindow : Window
             var disposeOld = _disposeActiveReceiver;
             _disposeActiveReceiver        = null;
             _activeReceiverFromUserId     = null;
+            // Log so the receiver log shows the cause of the incoming connState=closed
+            File.AppendAllText(LogPath,
+                $"[Recv] {DateTime.Now}: encerrando sessão anterior (re-oferta de {fromUserId})\n");
             disposeOld?.Invoke();
 
             _ = StartReceivingAsync(fromUserId, offerSdp, webRtc, iceCandReceivedHandler);

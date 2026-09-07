@@ -81,11 +81,19 @@ public partial class App : Application
 
     private static void OnUnobservedTask(object? sender, UnobservedTaskExceptionEventArgs e)
     {
+        e.SetObserved();
+
+        // SocketException 995 = WSA_OPERATION_ABORTED — happens every time SIPSorcery's
+        // pending UDP reads are cancelled by _pc.Close("dispose"). It is harmless noise;
+        // log everything else.
+        var inner = e.Exception?.InnerException;
+        if (inner is System.Net.Sockets.SocketException se && se.ErrorCode == 995)
+            return;
+
         try
         {
             File.AppendAllText(LogPath, $"[Task] {DateTime.Now}: {e.Exception}\n\n");
         }
         catch { }
-        e.SetObserved();
     }
 }
