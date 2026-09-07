@@ -659,6 +659,7 @@ public class WebRtcService : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
+        Log("DisposeAsync — closing peer connection");
         StopCapture();
 
         if (_audioEngine != null)
