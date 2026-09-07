@@ -37,7 +37,7 @@ namespace JaTelei.Client.Services
         //     We must therefore keep the versioned filenames and resolve them here.
         static Ffmpeg()
         {
-            var logPath = Path.Combine(Path.GetTempPath(), "jaclipei_ffmpeg.log");
+            var logPath = Path.Combine(Path.GetTempPath(), "jatelei_ffmpeg.log");
 
             try
             {
@@ -313,7 +313,7 @@ namespace JaTelei.Client.Services
 
         public MfH264Encoder(int width, int height, int fps = 30, int bitrateBps = 2_500_000)
         {
-            var logPath = Path.Combine(Path.GetTempPath(), "jaclipei_ffmpeg.log");
+            var logPath = Path.Combine(Path.GetTempPath(), "jatelei_ffmpeg.log");
 
             // libx264/yuv420p requires dimensions to be multiples of 2;
             // align to 16 (macroblock size) to prevent bottom-row artifacts.

@@ -199,7 +199,7 @@ public sealed class AdaptiveController : IDisposable
     // ── Logging ───────────────────────────────────────────────────────────────
 
     private static readonly string LogPath =
-        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "jaclipei_adaptive.txt");
+        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "jatelei_adaptive.txt");
 
     private static void Log(string msg) =>
         System.IO.File.AppendAllText(LogPath, $"[Adaptive] {DateTime.Now:HH:mm:ss.fff} {msg}\n");
