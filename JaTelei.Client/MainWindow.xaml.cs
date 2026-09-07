@@ -389,7 +389,8 @@ public partial class MainWindow : Window
             _activeReceiverFromUserId = null;
             _disposeActiveReceiver    = null;
             _signaling.IceCandidateReceived -= iceCandReceivedHandler;
-            _ = vm.DisposeAsync().AsTask();
+            // ShowFriends() disposes the ReceiveViewModel via the MainContent.Content
+            // check — do NOT also dispose here or we get a double-dispose race.
             Dispatcher.Invoke(ShowFriends);
         };
 
