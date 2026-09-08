@@ -72,6 +72,24 @@ public class WebRtcService : IAsyncDisposable
 
     // ── ICE / RTC config ──────────────────────────────────────────────────────
 
+    // Credenciais TURN dinâmicas (obtidas do servidor via ApiService.GetIceCredentialsAsync).
+    // Nulas enquanto não carregadas — fallback para appsettings.local.json.
+    private static string? _dynTurnUrl;
+    private static string? _dynTurnUser;
+    private static string? _dynTurnCred;
+
+    /// <summary>
+    /// Atualiza as credenciais TURN dinâmicas para a próxima sessão RTCPeerConnection.
+    /// Chamado por MainWindow logo após o login, e renovado antes de cada restart de ICE.
+    /// </summary>
+    public static void SetDynamicTurnCredentials(string turnUrl, string username, string credential)
+    {
+        _dynTurnUrl  = turnUrl;
+        _dynTurnUser = username;
+        _dynTurnCred = credential;
+        Log($"TURN credentials updated (expires embedded in username: {username.Split(':')[0]})");
+    }
+
     private static RTCConfiguration BuildRtcConfig()
     {
         var cfg = App.Config;
@@ -81,9 +99,11 @@ public class WebRtcService : IAsyncDisposable
             new() { urls = "stun:stun1.l.google.com:19302" },
         };
 
-        var turnUrl  = cfg["Ice:TurnUrl"];
-        var turnUser = cfg["Ice:TurnUsername"];
-        var turnCred = cfg["Ice:TurnCredential"];
+        // Preferir credenciais dinâmicas (geradas pelo servidor com TTL).
+        // Fallback para appsettings.local.json (para builds locais / dev).
+        var turnUrl  = _dynTurnUrl  ?? cfg["Ice:TurnUrl"];
+        var turnUser = _dynTurnUser ?? cfg["Ice:TurnUsername"];
+        var turnCred = _dynTurnCred ?? cfg["Ice:TurnCredential"];
 
         if (!string.IsNullOrWhiteSpace(turnUrl) && !string.IsNullOrWhiteSpace(turnUser))
         {
@@ -94,8 +114,8 @@ public class WebRtcService : IAsyncDisposable
         return new RTCConfiguration { iceServers = servers };
     }
 
-    private static readonly Lazy<RTCConfiguration> _lazyRtcConfig = new(BuildRtcConfig);
-    private static RTCConfiguration RtcConfig => _lazyRtcConfig.Value;
+    // RtcConfig é recriado a cada chamada para sempre pegar as credenciais atuais.
+    private static RTCConfiguration RtcConfig => BuildRtcConfig();
 
     // ── Public events & properties ────────────────────────────────────────────
 

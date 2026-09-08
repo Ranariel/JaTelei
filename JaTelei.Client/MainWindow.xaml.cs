@@ -106,6 +106,12 @@ public partial class MainWindow : Window
                 {
                     await _signaling.ConnectAsync(_api.Token!);
                     _signaling.OfferReceived += OnOfferReceived;
+
+                    // Buscar credenciais TURN temporárias do servidor (TTL 2h).
+                    // Falha silenciosamente — cai back para appsettings.local.json.
+                    var ice = await _api.GetIceCredentialsAsync();
+                    if (ice is not null)
+                        WebRtcService.SetDynamicTurnCredentials(ice.TurnUrl, ice.Username, ice.Credential);
                 }
                 catch (Exception ex)
                 {
@@ -201,6 +207,12 @@ public partial class MainWindow : Window
             _senderRestartCount = 0;
         _currentSendFriend = friend;
         _currentSendTarget = target;
+
+        // Renovar credenciais TURN antes de criar nova RTCPeerConnection
+        // (especialmente importante no ICE auto-restart, onde a sessão anterior já expirou)
+        var ice = await _api.GetIceCredentialsAsync();
+        if (ice is not null)
+            WebRtcService.SetDynamicTurnCredentials(ice.TurnUrl, ice.Username, ice.Credential);
 
         var webRtc = new WebRtcService();
         _currentSenderService = webRtc;

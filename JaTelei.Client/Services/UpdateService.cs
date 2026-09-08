@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net.Http;
 using System.Net.Http.Json;
+using System.Security.Cryptography;
 using System.Windows;
 
 namespace JaTelei.Client.Services;
@@ -12,7 +13,8 @@ public class UpdateService
     private static string CheckUrl =>
         App.Config["App:UpdateCheckUrl"] ?? "https://jaclipei.com/screenshare/api/update/latest";
 
-    public record UpdateInfo(string Version, string DownloadUrl, string Filename);
+    // sha256 é opcional — releases antigas (antes de v1.0.149) não têm hash
+    public record UpdateInfo(string Version, string DownloadUrl, string Filename, string? Sha256 = null);
 
     public static async Task<UpdateInfo?> CheckAsync(string currentVersion)
     {
@@ -48,6 +50,20 @@ public class UpdateService
         await using (var file   = File.Create(setupExe))
             await stream.CopyToAsync(file);
 
+        // ── Verificar SHA256 antes de executar ────────────────────────────────
+        // Se o servidor não enviou hash (releases antigas), ignora a verificação.
+        // Se enviou e o hash não bater, rejeita o instalador.
+        if (!string.IsNullOrWhiteSpace(update.Sha256))
+        {
+            var actual = await ComputeSha256Async(setupExe);
+            if (!string.Equals(actual, update.Sha256, StringComparison.OrdinalIgnoreCase))
+            {
+                File.Delete(setupExe);
+                throw new InvalidOperationException(
+                    $"SHA256 inválido no instalador baixado.\nEsperado: {update.Sha256}\nObtido:   {actual}");
+            }
+        }
+
         // Roda o instalador silencioso — ele fecha o app via taskkill e instala o novo exe
         Process.Start(new ProcessStartInfo(setupExe)
         {
@@ -56,5 +72,13 @@ public class UpdateService
         });
 
         Application.Current.Shutdown();
+    }
+
+    private static async Task<string> ComputeSha256Async(string filePath)
+    {
+        using var sha = SHA256.Create();
+        await using var stream = File.OpenRead(filePath);
+        var hash = await sha.ComputeHashAsync(stream);
+        return Convert.ToHexString(hash).ToLower();
     }
 }
