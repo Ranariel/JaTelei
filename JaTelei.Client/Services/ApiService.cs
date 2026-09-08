@@ -22,6 +22,9 @@ public class ApiService
     public record RegisterResult(Guid Id, string Username);
     public record PendingRequest(Guid Id, string Username, DateTime CreatedAt);
 
+    // Credenciais TURN temporárias geradas pelo servidor (TTL 2h)
+    public record IceCredentials(string TurnUrl, string Username, string Credential, int TtlSeconds);
+
     public async Task<(LoginResult? Result, string? Error)> LoginAsync(string username, string password)
     {
         var res = await _http.PostAsJsonAsync($"{Base}/auth/login", new { username, password });
@@ -72,4 +75,20 @@ public class ApiService
 
     public async Task<bool> AcceptFriendAsync(Guid friendshipId)
         => (await _http.PostAsync($"{Base}/friends/accept/{friendshipId}", null)).IsSuccessStatusCode;
+
+    /// <summary>
+    /// Obtém credenciais TURN temporárias do servidor (expiram em ~2h).
+    /// Retorna null em caso de falha — chamador deve cair back para appsettings.
+    /// </summary>
+    public async Task<IceCredentials?> GetIceCredentialsAsync()
+    {
+        try
+        {
+            return await _http.GetFromJsonAsync<IceCredentials>($"{Base}/ice-credentials");
+        }
+        catch
+        {
+            return null;
+        }
+    }
 }
