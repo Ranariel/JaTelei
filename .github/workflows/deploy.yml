@@ -50,26 +50,13 @@ jobs:
 
     - name: Create appsettings.local.json
       run: |
+        # TURN credentials are now generated dynamically by the server (HMAC-SHA1, TTL 2h).
+        # The static TURN_USERNAME/TURN_CREDENTIAL secrets are no longer used.
+        # This file exists only to satisfy the EmbeddedResource Condition in the .csproj.
         @"
-        {
-          "Ice": {
-            "TurnUsername": "${{ secrets.TURN_USERNAME }}",
-            "TurnCredential": "${{ secrets.TURN_CREDENTIAL }}"
-          }
-        }
+        {}
         "@ | Set-Content JaTelei.Client/appsettings.local.json
-
-    # ── Verificar que o arquivo foi criado e tem as credenciais ────────────────
-    - name: Verify appsettings.local.json has TURN credentials
-      run: |
-        $content = Get-Content JaTelei.Client/appsettings.local.json -Raw | ConvertFrom-Json
-        $user = $content.Ice.TurnUsername
-        $cred = $content.Ice.TurnCredential
-        if ([string]::IsNullOrWhiteSpace($user) -or [string]::IsNullOrWhiteSpace($cred)) {
-          Write-Error "TURN credentials missing — set TURN_USERNAME and TURN_CREDENTIAL in GitHub Secrets"
-          exit 1
-        }
-        Write-Host "TURN credentials present (TurnUsername=$user)"
+        Write-Host "appsettings.local.json created (TURN credentials are server-generated at runtime)"
 
     - name: Publish .NET app
       run: dotnet publish JaTelei.Client/JaTelei.Client.csproj -c Release -r win-x64 --self-contained true /p:PublishSingleFile=true -o publish
