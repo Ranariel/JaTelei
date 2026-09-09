@@ -14,10 +14,12 @@ public partial class LoginView : UserControl
         // Sincroniza PasswordBox → ViewModel (PasswordBox não suporta binding por segurança)
         PwdBox.PasswordChanged += (_, _) =>
         {
-            PwdPlaceholder.Visibility = string.IsNullOrEmpty(PwdBox.Password) ? Visibility.Visible : Visibility.Collapsed;
+            UpdatePasswordPlaceholder();
             if (DataContext is LoginViewModel vm)
                 vm.Password = PwdBox.Password;
         };
+        PwdBox.GotKeyboardFocus += (_, _) => UpdatePasswordPlaceholder();
+        PwdBox.LostKeyboardFocus += (_, _) => UpdatePasswordPlaceholder();
 
         // Carrega credenciais salvas assim que o DataContext estiver disponível
         DataContextChanged += (_, _) =>
@@ -27,7 +29,7 @@ public partial class LoginView : UserControl
                 vm.TryLoadSavedCredentials();
                 if (!string.IsNullOrEmpty(vm.SavedPassword))
                     PwdBox.Password = vm.SavedPassword;
-                PwdPlaceholder.Visibility = string.IsNullOrEmpty(PwdBox.Password) ? Visibility.Visible : Visibility.Collapsed;
+                UpdatePasswordPlaceholder();
 
                 if (!string.IsNullOrEmpty(vm.SavedPassword) && vm.SubmitCommand.CanExecute(null))
                 {
@@ -38,6 +40,13 @@ public partial class LoginView : UserControl
 
         // Enter em qualquer campo do formulário aciona o botão Entrar/Criar
         KeyDown += OnKeyDown;
+    }
+
+    private void UpdatePasswordPlaceholder()
+    {
+        PwdPlaceholder.Visibility = string.IsNullOrEmpty(PwdBox.Password) && !PwdBox.IsKeyboardFocusWithin
+            ? Visibility.Visible
+            : Visibility.Collapsed;
     }
 
     private void OnKeyDown(object sender, KeyEventArgs e)
