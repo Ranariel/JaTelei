@@ -37,7 +37,7 @@
         </Style>
 
         <Style x:Key="ActionButton" TargetType="Button" BasedOn="{StaticResource BtnSecondary}">
-            <Setter Property="Height" Value="50"/>
+            <Setter Property="Height" Value="46"/>
             <Setter Property="Padding" Value="14,8"/>
             <Setter Property="FontSize" Value="12"/>
         </Style>
@@ -92,6 +92,12 @@
 
         <Border Grid.Column="0" Background="#0D1519" BorderBrush="#1D2A2F" BorderThickness="0,0,1,0">
             <DockPanel Margin="14">
+                <Button DockPanel.Dock="Bottom" Command="{Binding LogoutCommand}" Style="{StaticResource BtnSecondary}" Padding="12,9" Margin="0,12,0,0">
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <TextBlock Text="&#xE8AC;" FontFamily="Segoe MDL2 Assets" FontSize="16" Margin="0,0,8,0"/>
+                        <TextBlock Text="Sair" FontSize="13" VerticalAlignment="Center"/>
+                    </StackPanel>
+                </Button>
                 <StackPanel DockPanel.Dock="Top">
                     <StackPanel Orientation="Horizontal" Margin="0,8,0,26">
                         <Border Width="34" Height="34" BorderBrush="#24E0B6" BorderThickness="2" CornerRadius="6" Margin="0,0,10,0">
@@ -212,14 +218,14 @@
                 </Grid>
             </Border>
 
-            <Grid Grid.Row="1" Margin="22,18,22,36" Visibility="{Binding IsShareSection, Converter={StaticResource BoolToVis}}">
+            <Grid Grid.Row="1" Margin="22,18,22,96" Visibility="{Binding IsShareSection, Converter={StaticResource BoolToVis}}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="326"/>
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*"/>
-                    <RowDefinition Height="64"/>
+                    <RowDefinition Height="56"/>
                 </Grid.RowDefinitions>
 
                 <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Panel}" ClipToBounds="True" Margin="0,0,14,14">
@@ -288,7 +294,7 @@
                                         <ColumnDefinition Width="*"/>
                                         <ColumnDefinition Width="40"/>
                                     </Grid.ColumnDefinitions>
-                                    <TextBox Tag="Apelido do contato" Text="{Binding AddUsername, UpdateSourceTrigger=PropertyChanged}" FontSize="12" Padding="9,7"/>
+                                    <TextBox Tag="Apelido do contato" Text="{Binding AddUsername, UpdateSourceTrigger=PropertyChanged}" FontSize="12" Height="42" Padding="11,0"/>
                                     <Button Grid.Column="1" Command="{Binding AddFriendCommand}" Style="{StaticResource BtnPrimary}" Padding="0" Margin="6,0,0,0">
                                         <TextBlock Text="+" FontSize="18" FontWeight="SemiBold"/>
                                     </Button>

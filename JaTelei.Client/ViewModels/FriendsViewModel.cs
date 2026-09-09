@@ -23,13 +23,15 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     [ObservableProperty] private string _activeSection = "share";
     [ObservableProperty] private int _selectedResolutionHeight = 720;
     [ObservableProperty] private int _selectedFps = 30;
+    [ObservableProperty] private int _currentUploadKbps;
+    [ObservableProperty] private int _currentLatencyMs;
 
     public string SessionCode { get; } = $"JT-{Random.Shared.Next(1000, 9999)}";
     public string SessionLink => $"https://jatelei.com/sala/{SessionCode}";
     public string QualityLabel => FormatResolution(SelectedResolutionHeight);
     public string FrameRateLabel => $"{SelectedFps} fps";
-    public string LatencyLabel => IsSharing ? "Latencia 42 ms" : "Aguardando";
-    public string UploadLabel => IsSharing ? $"{GetRecommendedBitrateKbps(SelectedResolutionHeight)} kbps" : "0 kbps";
+    public string LatencyLabel => IsSharing ? (CurrentLatencyMs > 0 ? $"Atraso {CurrentLatencyMs} ms" : "Medindo") : "Aguardando";
+    public string UploadLabel => IsSharing ? $"{CurrentUploadKbps} kbps" : "0 kbps";
     public string TargetBitrateLabel => $"{GetRecommendedBitrateKbps(SelectedResolutionHeight)} kbps";
     public string SharingStatus => IsSharing ? (IsPaused ? "Pausado" : "Compartilhando tela") : "Pronto para compartilhar";
     public string ViewerCountText => IsSharing ? "1 conectado" : "0 conectado";
@@ -95,8 +97,19 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
         OnPropertyChanged(nameof(FrameRateLabel));
     }
 
+    partial void OnCurrentUploadKbpsChanged(int value)
+    {
+        OnPropertyChanged(nameof(UploadLabel));
+    }
+
+    partial void OnCurrentLatencyMsChanged(int value)
+    {
+        OnPropertyChanged(nameof(LatencyLabel));
+    }
+
     public event Action<Friend>? StartShareRequested;
     public event Action?         StopShareRequested;
+    public event Action?         LogoutRequested;
 
     [RelayCommand]
     public async Task LoadAsync()
@@ -163,11 +176,14 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     [RelayCommand] private void ShowSession() => ActiveSection = "session";
     [RelayCommand] private void ShowDevices() => ActiveSection = "devices";
     [RelayCommand] private void ShowSettings() => ActiveSection = "settings";
+    [RelayCommand] private void Logout() => LogoutRequested?.Invoke();
 
     public void OnSharingStarted(ShareTarget target)
     {
         SelectedResolutionHeight = target.ResolutionHeight;
         SelectedFps = target.Fps;
+        CurrentUploadKbps = 0;
+        CurrentLatencyMs = 0;
         IsPaused = false;
         IsSharing = true;
     }
@@ -176,10 +192,18 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     {
         IsSharing = false;
         IsPaused = false;
+        CurrentUploadKbps = 0;
+        CurrentLatencyMs = 0;
         SelfPreviewImage = null;
     }
 
     public void OnPreviewFrame(BitmapSource img) => SelfPreviewImage = img;
+
+    public void OnNetworkStats(WebRtcService.NetworkStats stats)
+    {
+        CurrentUploadKbps = stats.UploadKbps;
+        CurrentLatencyMs = stats.PipelineDelayMs;
+    }
 
     private static string FormatResolution(int height) => height switch
     {

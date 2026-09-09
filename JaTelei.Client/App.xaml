@@ -50,7 +50,9 @@
             <Setter Property="CaretBrush"    Value="{StaticResource BrText}"/>
             <Setter Property="BorderBrush"   Value="#FF243136"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding"       Value="10,8"/>
+            <Setter Property="Height"        Value="44"/>
+            <Setter Property="Padding"       Value="12,0"/>
+            <Setter Property="VerticalContentAlignment" Value="Center"/>
             <Setter Property="FontSize"      Value="13"/>
             <Setter Property="FontFamily"    Value="Segoe UI"/>
             <Setter Property="SelectionBrush" Value="#FF22D3A6"/>
@@ -67,6 +69,7 @@
                                 <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center"/>
                                 <TextBlock Text="{TemplateBinding Tag}"
                                            Foreground="#FF6D7B80"
+                                           Margin="12,0,0,0"
                                            FontSize="{TemplateBinding FontSize}"
                                            VerticalAlignment="Center"
                                            IsHitTestVisible="False">
@@ -103,7 +106,8 @@
             <Setter Property="CaretBrush"    Value="{StaticResource BrText}"/>
             <Setter Property="BorderBrush"   Value="#FF243136"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding"       Value="10,8"/>
+            <Setter Property="Height"        Value="44"/>
+            <Setter Property="Padding"       Value="12,0"/>
             <Setter Property="FontSize"      Value="13"/>
             <Setter Property="FontFamily"    Value="Segoe UI"/>
             <Setter Property="SelectionBrush" Value="#FF22D3A6"/>

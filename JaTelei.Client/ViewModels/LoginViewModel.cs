@@ -15,7 +15,7 @@ public partial class LoginViewModel(ApiService api) : ObservableObject
     [ObservableProperty] private string _errorMessage = string.Empty;
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private bool _isRegisterMode;
-    [ObservableProperty] private bool _rememberMe;
+    [ObservableProperty] private bool _rememberMe = true;
 
     /// <summary>
     /// Senha carregada do armazenamento seguro — usada pelo code-behind
@@ -69,7 +69,7 @@ public partial class LoginViewModel(ApiService api) : ObservableObject
         catch { /* best-effort */ }
     }
 
-    private static void DeleteSavedCredentials()
+    public static void DeleteSavedCredentials()
     {
         try { if (File.Exists(CredsPath)) File.Delete(CredsPath); }
         catch { }
@@ -101,11 +101,9 @@ public partial class LoginViewModel(ApiService api) : ObservableObject
             var (login, loginErr) = await api.LoginAsync(Username, Password);
             if (login is null) { ErrorMessage = loginErr ?? "Apelido ou senha incorretos."; return; }
 
-            // Salva ou apaga credenciais conforme preferência do usuário
-            if (RememberMe)
-                SaveCredentials();
-            else
-                DeleteSavedCredentials();
+            // A sessao permanece salva neste computador; somente Logout remove o acesso.
+            RememberMe = true;
+            SaveCredentials();
 
             LoginSuccess?.Invoke();
         }

@@ -18,6 +18,14 @@ public class ApiService
         _http.DefaultRequestHeaders.Authorization =
             new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", Token);
 
+    public void ClearAuth()
+    {
+        Token = null;
+        UserId = null;
+        Username = null;
+        _http.DefaultRequestHeaders.Authorization = null;
+    }
+
     public record LoginResult(string Token, string Username, Guid Id);
     public record RegisterResult(Guid Id, string Username);
     public record PendingRequest(Guid Id, string Username, DateTime CreatedAt);
