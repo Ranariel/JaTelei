@@ -19,7 +19,6 @@
         <Grid>
             <Grid.RowDefinitions>
                 <RowDefinition Height="34"/>
-                <RowDefinition Height="Auto"/>
                 <RowDefinition Height="*"/>
             </Grid.RowDefinitions>
 
@@ -40,17 +39,29 @@
                 </Grid>
             </Border>
 
-            <Border Grid.Row="1" x:Name="UpdateBanner" Background="#102D28" Visibility="Collapsed" Padding="14,9" BorderBrush="#1E8F75" BorderThickness="0,0,0,1">
-                <DockPanel>
-                    <Button DockPanel.Dock="Right" x:Name="UpdateButton" Content="Atualizar agora" Style="{StaticResource BtnPrimary}" Padding="12,5" Click="UpdateButton_Click" WindowChrome.IsHitTestVisibleInChrome="True"/>
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <Ellipse Width="7" Height="7" Fill="#28E4B0" Margin="0,0,8,0"/>
-                        <TextBlock x:Name="UpdateText" Text="Nova versao disponivel!" Foreground="#D7FFEF" FontSize="12"/>
-                    </StackPanel>
-                </DockPanel>
-            </Border>
+            <ContentControl Grid.Row="1" x:Name="MainContent"/>
 
-            <ContentControl Grid.Row="2" x:Name="MainContent"/>
+            <Grid Grid.Row="1" x:Name="UpdateBanner" Visibility="Collapsed" Background="#99000000">
+                <Border Width="440" MaxWidth="440" Background="#FF0D1519" BorderBrush="#FF243136" BorderThickness="1" CornerRadius="8" Padding="24" HorizontalAlignment="Center" VerticalAlignment="Center">
+                    <StackPanel>
+                        <Border Width="54" Height="54" CornerRadius="14" Background="#182D29" BorderBrush="#22D3A6" BorderThickness="1" HorizontalAlignment="Left" Margin="0,0,0,18">
+                            <TextBlock Text="&#xE895;" FontFamily="Segoe MDL2 Assets" Foreground="#35E6BA" FontSize="24" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <TextBlock Text="Atualização disponível" Foreground="#FFFFFF" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                        <TextBlock x:Name="UpdateText" Text="Uma nova versão do JaTelei está pronta." Foreground="#C9D3D5" FontSize="13" LineHeight="20" TextWrapping="Wrap" Margin="0,0,0,22"/>
+                        <Border Background="#0A1114" BorderBrush="#223238" BorderThickness="1" CornerRadius="7" Padding="12" Margin="0,0,0,22">
+                            <StackPanel Orientation="Horizontal">
+                                <Ellipse Width="8" Height="8" Fill="#28E49F" Margin="0,0,10,0" VerticalAlignment="Center"/>
+                                <TextBlock Text="Recomendado para receber correções de vídeo, áudio e estabilidade." Foreground="#9FB0B5" FontSize="12" TextWrapping="Wrap"/>
+                            </StackPanel>
+                        </Border>
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button x:Name="UpdateLaterButton" Content="Depois" Style="{StaticResource BtnSecondary}" Padding="18,9" MinWidth="94" Margin="0,0,10,0" Click="UpdateLaterButton_Click"/>
+                            <Button x:Name="UpdateButton" Content="Atualizar agora" Style="{StaticResource BtnPrimary}" Padding="18,9" MinWidth="148" Click="UpdateButton_Click"/>
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </Grid>
         </Grid>
     </Border>
 </Window>
