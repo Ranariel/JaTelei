@@ -90,25 +90,65 @@
                         <TextBlock Text="JaTelei" Foreground="#F6FBFB" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center"/>
                     </StackPanel>
 
-                    <Button Style="{StaticResource NavButton}" Background="#143530" Foreground="#FFFFFF" Margin="0,0,0,8" Command="{Binding ShowShareCommand}">
+                    <Button Margin="0,0,0,8" Command="{Binding ShowShareCommand}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource NavButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsShareSection}" Value="True">
+                                        <Setter Property="Background" Value="#143530"/>
+                                        <Setter Property="Foreground" Value="#FFFFFF"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE7F4;" FontFamily="Segoe MDL2 Assets" FontSize="18" Width="32"/>
                             <TextBlock Text="Compartilhar" FontSize="14" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                    <Button Style="{StaticResource NavButton}" Margin="0,0,0,8" Command="{Binding ShowSessionCommand}">
+                    <Button Margin="0,0,0,8" Command="{Binding ShowSessionCommand}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource NavButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsSessionSection}" Value="True">
+                                        <Setter Property="Background" Value="#143530"/>
+                                        <Setter Property="Foreground" Value="#FFFFFF"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE71B;" FontFamily="Segoe MDL2 Assets" FontSize="18" Width="32"/>
                             <TextBlock Text="Sessao" FontSize="14" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                    <Button Style="{StaticResource NavButton}" Margin="0,0,0,8" Command="{Binding ShowDevicesCommand}">
+                    <Button Margin="0,0,0,8" Command="{Binding ShowDevicesCommand}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource NavButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsDevicesSection}" Value="True">
+                                        <Setter Property="Background" Value="#143530"/>
+                                        <Setter Property="Foreground" Value="#FFFFFF"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE772;" FontFamily="Segoe MDL2 Assets" FontSize="18" Width="32"/>
                             <TextBlock Text="Dispositivos" FontSize="14" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                    <Button Style="{StaticResource NavButton}" Command="{Binding ShowSettingsCommand}">
+                    <Button Command="{Binding ShowSettingsCommand}">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource NavButton}">
+                                <Style.Triggers>
+                                    <DataTrigger Binding="{Binding IsSettingsSection}" Value="True">
+                                        <Setter Property="Background" Value="#143530"/>
+                                        <Setter Property="Foreground" Value="#FFFFFF"/>
+                                    </DataTrigger>
+                                </Style.Triggers>
+                            </Style>
+                        </Button.Style>
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="18" Width="32"/>
                             <TextBlock Text="Configuracoes" FontSize="14" VerticalAlignment="Center"/>

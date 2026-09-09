@@ -1,3 +1,4 @@
+using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using JaTelei.Client.ViewModels;
@@ -13,6 +14,7 @@ public partial class LoginView : UserControl
         // Sincroniza PasswordBox → ViewModel (PasswordBox não suporta binding por segurança)
         PwdBox.PasswordChanged += (_, _) =>
         {
+            PwdPlaceholder.Visibility = string.IsNullOrEmpty(PwdBox.Password) ? Visibility.Visible : Visibility.Collapsed;
             if (DataContext is LoginViewModel vm)
                 vm.Password = PwdBox.Password;
         };
@@ -25,6 +27,7 @@ public partial class LoginView : UserControl
                 vm.TryLoadSavedCredentials();
                 if (!string.IsNullOrEmpty(vm.SavedPassword))
                     PwdBox.Password = vm.SavedPassword;
+                PwdPlaceholder.Visibility = string.IsNullOrEmpty(PwdBox.Password) ? Visibility.Visible : Visibility.Collapsed;
             }
         };
 

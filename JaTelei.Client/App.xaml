@@ -15,17 +15,17 @@
 
         <!-- ── Palette ───────────────────────────────────────────────── -->
         <Color x:Key="ColBg">#FF000000</Color>
-        <Color x:Key="ColSurface">#FF0D0D0D</Color>
-        <Color x:Key="ColSurface2">#FF161616</Color>
-        <Color x:Key="ColBorder">#FF2A2A2A</Color>
-        <Color x:Key="ColBorderHover">#FF404040</Color>
+        <Color x:Key="ColSurface">#FF0D1519</Color>
+        <Color x:Key="ColSurface2">#FF121B1F</Color>
+        <Color x:Key="ColBorder">#FF243136</Color>
+        <Color x:Key="ColBorderHover">#FF36505A</Color>
         <Color x:Key="ColText">#FFF0F0F0</Color>
         <Color x:Key="ColTextMuted">#FF888888</Color>
         <Color x:Key="ColTextDim">#FF444444</Color>
-        <Color x:Key="ColAccent">#FF3B82F6</Color>
-        <Color x:Key="ColAccentHover">#FF60A5FA</Color>
-        <Color x:Key="ColAccentDim">#1A3B82F6</Color>
-        <Color x:Key="ColAccentDimHover">#2D3B82F6</Color>
+        <Color x:Key="ColAccent">#FF22D3A6</Color>
+        <Color x:Key="ColAccentHover">#FF35E6BA</Color>
+        <Color x:Key="ColAccentDim">#261DD3A6</Color>
+        <Color x:Key="ColAccentDimHover">#331DD3A6</Color>
         <Color x:Key="ColDanger">#FFE05252</Color>
         <Color x:Key="ColSuccess">#FF52C87E</Color>
 
@@ -45,15 +45,15 @@
 
         <!-- ── TextBox (with placeholder via Tag) ─────────────────────── -->
         <Style TargetType="TextBox">
-            <Setter Property="Background"    Value="{StaticResource BrSurface}"/>
+            <Setter Property="Background"    Value="#FF0D1519"/>
             <Setter Property="Foreground"    Value="{StaticResource BrText}"/>
             <Setter Property="CaretBrush"    Value="{StaticResource BrText}"/>
-            <Setter Property="BorderBrush"   Value="{StaticResource BrBorder}"/>
+            <Setter Property="BorderBrush"   Value="#FF243136"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding"       Value="10,8"/>
             <Setter Property="FontSize"      Value="13"/>
             <Setter Property="FontFamily"    Value="Segoe UI"/>
-            <Setter Property="SelectionBrush" Value="{StaticResource BrAccent}"/>
+            <Setter Property="SelectionBrush" Value="#FF22D3A6"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="TextBox">
@@ -61,12 +61,12 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="8"
+                                CornerRadius="7"
                                 Padding="{TemplateBinding Padding}">
                             <Grid>
                                 <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center"/>
                                 <TextBlock Text="{TemplateBinding Tag}"
-                                           Foreground="{StaticResource BrTextDim}"
+                                           Foreground="#FF6D7B80"
                                            FontSize="{TemplateBinding FontSize}"
                                            VerticalAlignment="Center"
                                            IsHitTestVisible="False">
@@ -85,10 +85,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsFocused" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource BrAccent}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#FF22D3A6"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource BrBorderHover}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#FF36505A"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -98,15 +98,15 @@
 
         <!-- ── PasswordBox ────────────────────────────────────────────── -->
         <Style TargetType="PasswordBox">
-            <Setter Property="Background"    Value="{StaticResource BrSurface}"/>
+            <Setter Property="Background"    Value="#FF0D1519"/>
             <Setter Property="Foreground"    Value="{StaticResource BrText}"/>
             <Setter Property="CaretBrush"    Value="{StaticResource BrText}"/>
-            <Setter Property="BorderBrush"   Value="{StaticResource BrBorder}"/>
+            <Setter Property="BorderBrush"   Value="#FF243136"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding"       Value="10,8"/>
             <Setter Property="FontSize"      Value="13"/>
             <Setter Property="FontFamily"    Value="Segoe UI"/>
-            <Setter Property="SelectionBrush" Value="{StaticResource BrAccent}"/>
+            <Setter Property="SelectionBrush" Value="#FF22D3A6"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="PasswordBox">
@@ -120,10 +120,10 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsFocused" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource BrAccent}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#FF22D3A6"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource BrBorderHover}"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#FF36505A"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -133,7 +133,7 @@
 
         <!-- ── Button: Primary (solid blue) ──────────────────────────── -->
         <Style x:Key="BtnPrimary" TargetType="Button">
-            <Setter Property="Background"    Value="{StaticResource BrAccent}"/>
+            <Setter Property="Background"    Value="#FF22D3A6"/>
             <Setter Property="Foreground"    Value="White"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Padding"       Value="16,9"/>
@@ -152,7 +152,7 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource BrAccentHover}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#FF35E6BA"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Bd" Property="Opacity" Value="0.85"/>
@@ -168,9 +168,9 @@
 
         <!-- ── Button: Secondary (surface + border) ───────────────────── -->
         <Style x:Key="BtnSecondary" TargetType="Button">
-            <Setter Property="Background"    Value="{StaticResource BrSurface}"/>
+            <Setter Property="Background"    Value="#FF0D1519"/>
             <Setter Property="Foreground"    Value="{StaticResource BrText}"/>
-            <Setter Property="BorderBrush"   Value="{StaticResource BrBorder}"/>
+            <Setter Property="BorderBrush"   Value="#FF243136"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding"       Value="16,9"/>
             <Setter Property="FontSize"      Value="13"/>
@@ -189,8 +189,8 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource BrSurface2}"/>
-                                <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource BrBorderHover}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#FF121B1F"/>
+                                <Setter TargetName="Bd" Property="BorderBrush" Value="#FF36505A"/>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="Bd" Property="Opacity" Value="0.8"/>
@@ -223,7 +223,7 @@
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
                                 <Setter Property="Foreground" Value="{StaticResource BrText}"/>
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource BrSurface}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#FF0D1519"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
@@ -237,9 +237,9 @@
             <Setter Property="Foreground"    Value="{StaticResource BrTextMuted}"/>
             <Setter Property="BorderThickness" Value="0"/>
             <Setter Property="Width"         Value="44"/>
-            <Setter Property="Height"        Value="30"/>
-            <Setter Property="FontSize"      Value="12"/>
-            <Setter Property="FontFamily"    Value="Segoe UI"/>
+            <Setter Property="Height"        Value="34"/>
+            <Setter Property="FontSize"      Value="10"/>
+            <Setter Property="FontFamily"    Value="Segoe MDL2 Assets"/>
             <Setter Property="Cursor"        Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
@@ -269,13 +269,13 @@
 
         <!-- ── ComboBox ───────────────────────────────────────────────── -->
         <Style TargetType="ComboBox">
-            <Setter Property="Background"    Value="{StaticResource BrSurface}"/>
+            <Setter Property="Background"    Value="#FF0D1519"/>
             <Setter Property="Foreground"    Value="{StaticResource BrText}"/>
-            <Setter Property="BorderBrush"   Value="{StaticResource BrBorder}"/>
+            <Setter Property="BorderBrush"   Value="#FF243136"/>
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Padding"       Value="10,7"/>
             <Setter Property="FontSize"      Value="13"/>
-            <Setter Property="FontFamily"    Value="Segoe UI"/>
+            <Setter Property="FontFamily"    Value="Segoe MDL2 Assets"/>
         </Style>
 
         <!-- ── ListBox / ListBoxItem ──────────────────────────────────── -->
@@ -300,11 +300,11 @@
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource BrSurface}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#FF0D1519"/>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="Bd" Property="Background" Value="{StaticResource BrAccentDim}"/>
-                                <Setter Property="Foreground" Value="{StaticResource BrAccent}"/>
+                                <Setter TargetName="Bd" Property="Background" Value="#261DD3A6"/>
+                                <Setter Property="Foreground" Value="#FF22D3A6"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>
