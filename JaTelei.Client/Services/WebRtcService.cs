@@ -539,7 +539,7 @@ public class WebRtcService : IAsyncDisposable
                             }
                         }
 
-                        if (SenderPreviewFrame != null && (++_previewCount % Math.Max(effectiveFps * 10, 120) == 0))
+                        if (SenderPreviewFrame != null && (++_previewCount % Math.Max(effectiveFps / 5, 1) == 0))
                         {
                             try
                             {
@@ -562,7 +562,7 @@ public class WebRtcService : IAsyncDisposable
 
                                 if (previewRaw != null && pw > 0 && ph > 0)
                                 {
-                                    previewRaw = DownscaleBgra(previewRaw, pw, ph, 960, out pw, out ph);
+                                    previewRaw = DownscaleBgra(previewRaw, pw, ph, 720, out pw, out ph);
                                     var wb = new WriteableBitmap(pw, ph, 96, 96,
                                         System.Windows.Media.PixelFormats.Bgra32, null);
                                     wb.WritePixels(new System.Windows.Int32Rect(0, 0, pw, ph), previewRaw, pw * 4, 0);

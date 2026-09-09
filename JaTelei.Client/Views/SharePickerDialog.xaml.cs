@@ -57,9 +57,11 @@ public partial class SharePickerDialog : Window
     {
         InitializeComponent();
 
-        // Limitar altura ao espaço útil da tela (WorkArea), com 10% de margem
+        // Mantem a janela inteira dentro da tela, inclusive em monitores menores.
         var workArea = SystemParameters.WorkArea;
-        MaxHeight = workArea.Height * 0.90;
+        MaxHeight = Math.Min(680, workArea.Height - 48);
+        Height = Math.Min(640, MaxHeight);
+        Loaded += (_, _) => CenterInsideWorkArea();
 
         CboResolution.ItemsSource   = Resolutions;
         CboResolution.SelectedIndex = 2;   // 720p por padrao
@@ -71,6 +73,16 @@ public partial class SharePickerDialog : Window
             _previewCts?.Dispose();
             _previewCts = null;
         };
+    }
+
+    private void CenterInsideWorkArea()
+    {
+        var workArea = SystemParameters.WorkArea;
+        Left = workArea.Left + Math.Max(0, (workArea.Width - ActualWidth) / 2);
+        Top = workArea.Top + Math.Max(0, (workArea.Height - ActualHeight) / 2);
+
+        if (Left + ActualWidth > workArea.Right) Left = Math.Max(workArea.Left, workArea.Right - ActualWidth - 12);
+        if (Top + ActualHeight > workArea.Bottom) Top = Math.Max(workArea.Top, workArea.Bottom - ActualHeight - 12);
     }
 
     // Botoes de tipo
@@ -86,7 +98,8 @@ public partial class SharePickerDialog : Window
             _partialResult = new ShareTarget
             {
                 Type        = ShareType.Screen,
-                DisplayName = monitors.Count == 1 ? monitors[0].DisplayName : "Tela Principal"
+                DisplayName = monitors.Count == 1 ? monitors[0].DisplayName : "Tela Principal",
+                MonitorBounds = monitors.Count == 1 ? monitors[0].Bounds : null
             };
             BtnConfirm.IsEnabled   = true;
             ListPanel.Visibility   = Visibility.Collapsed;
