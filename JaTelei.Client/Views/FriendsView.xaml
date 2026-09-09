@@ -37,7 +37,7 @@
         </Style>
 
         <Style x:Key="ActionButton" TargetType="Button" BasedOn="{StaticResource BtnSecondary}">
-            <Setter Property="Height" Value="58"/>
+            <Setter Property="Height" Value="54"/>
             <Setter Property="Padding" Value="14,8"/>
             <Setter Property="FontSize" Value="12"/>
         </Style>
@@ -202,14 +202,14 @@
                 </Grid>
             </Border>
 
-            <Grid Grid.Row="1" Margin="22" Visibility="{Binding IsShareSection, Converter={StaticResource BoolToVis}}">
+            <Grid Grid.Row="1" Margin="22,18,22,18" Visibility="{Binding IsShareSection, Converter={StaticResource BoolToVis}}">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="326"/>
                 </Grid.ColumnDefinitions>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="*"/>
-                    <RowDefinition Height="78"/>
+                    <RowDefinition Height="70"/>
                 </Grid.RowDefinitions>
 
                 <Border Grid.Row="0" Grid.Column="0" Style="{StaticResource Panel}" ClipToBounds="True" Margin="0,0,14,14">
@@ -240,7 +240,7 @@
                         <ColumnDefinition Width="2.0*"/>
                         <ColumnDefinition Width="1.0*"/>
                         <ColumnDefinition Width="1.3*"/>
-                        <ColumnDefinition Width="1.55*"/>
+                        <ColumnDefinition Width="1.15*"/>
                     </Grid.ColumnDefinitions>
                     <Button Grid.Column="0" Command="{Binding ShareScreenCommand}" Style="{StaticResource ActionButton}" Background="#0D7D63" BorderBrush="#20D5A6" Foreground="#FFFFFF" Margin="0,0,8,0">
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
@@ -263,7 +263,7 @@
                     <Button Grid.Column="3" Command="{Binding StopShareCommand}" Style="{StaticResource ActionButton}" Background="#3A1519" BorderBrush="#E05252" Foreground="#FFD6D6">
                         <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
                             <TextBlock Text="&#xE71A;" FontFamily="Segoe MDL2 Assets" FontSize="20" Margin="0,0,8,0"/>
-                            <TextBlock Text="Parar compartilhamento" VerticalAlignment="Center"/>
+                            <TextBlock Text="Parar" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
                 </Grid>
@@ -359,7 +359,16 @@
                             <StackPanel>
                                 <TextBlock Text="Conexao" Foreground="#FFFFFF" FontSize="16" FontWeight="SemiBold" Margin="0,0,0,12"/>
                                 <TextBlock Text="Servidor conectado" Foreground="#58F0C3" FontSize="13"/>
-                                <TextBlock Text="Qualidade 1080p / 60 fps" Foreground="#C9D3D5" FontSize="12" Margin="0,8,0,0"/>
+                                <StackPanel Orientation="Horizontal" Margin="0,8,0,0">
+                                    <TextBlock Text="Qualidade " Foreground="#C9D3D5" FontSize="12"/>
+                                    <TextBlock Text="{Binding QualityLabel}" Foreground="#C9D3D5" FontSize="12"/>
+                                    <TextBlock Text=" / " Foreground="#C9D3D5" FontSize="12"/>
+                                    <TextBlock Text="{Binding FrameRateLabel}" Foreground="#C9D3D5" FontSize="12"/>
+                                </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                    <TextBlock Text="Bitrate alvo " Foreground="#9CABAF" FontSize="12"/>
+                                    <TextBlock Text="{Binding UploadLabel}" Foreground="#9CABAF" FontSize="12"/>
+                                </StackPanel>
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -406,7 +415,7 @@
                                 <StackPanel>
                                     <TextBlock Text="Compartilhamento" Foreground="#FFFFFF" FontSize="16" FontWeight="SemiBold"/>
                                     <CheckBox IsChecked="{Binding IncludeSystemAudio}" Foreground="#C9D3D5" FontSize="13" Content="Incluir audio do sistema por padrao" Margin="0,10,0,0"/>
-                                    <TextBlock Text="Qualidade padrao: 1080p / 60 fps" Foreground="#9CABAF" FontSize="13" Margin="0,12,0,0"/>
+                                    <TextBlock Foreground="#9CABAF" FontSize="13" Margin="0,12,0,0"><Run Text="Qualidade atual: "/><Run Text="{Binding QualityLabel}"/><Run Text=" / "/><Run Text="{Binding FrameRateLabel}"/></TextBlock>
                                 </StackPanel>
                             </Border>
                         </UniformGrid>

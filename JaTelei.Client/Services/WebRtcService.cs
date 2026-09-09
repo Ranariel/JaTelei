@@ -6,6 +6,7 @@ using System.Net;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using JaTelei.Client.Models;
+using JaTelei.Client.ViewModels;
 using SIPSorcery.Net;
 using SIPSorceryMedia.Abstractions;
 
@@ -356,8 +357,8 @@ public class WebRtcService : IAsyncDisposable
         var token = _cts.Token;
 
         int effectiveFps = target?.Fps > 0 ? target.Fps : fps;
-        int bitrateKbps  = 20_000;
         int targetHeight = target?.ResolutionHeight ?? 0;
+        int bitrateKbps  = FriendsViewModel.GetRecommendedBitrateKbps(targetHeight);
 
         uint rtpDuration = (uint)(90_000.0 / effectiveFps);
         var  delay       = TimeSpan.FromMilliseconds(1000.0 / effectiveFps);
@@ -538,7 +539,7 @@ public class WebRtcService : IAsyncDisposable
                             }
                         }
 
-                        if (SenderPreviewFrame != null && (++_previewCount % Math.Max(effectiveFps * 2, 30) == 0))
+                        if (SenderPreviewFrame != null && (++_previewCount % Math.Max(effectiveFps * 10, 120) == 0))
                         {
                             try
                             {
@@ -561,6 +562,7 @@ public class WebRtcService : IAsyncDisposable
 
                                 if (previewRaw != null && pw > 0 && ph > 0)
                                 {
+                                    previewRaw = DownscaleBgra(previewRaw, pw, ph, 960, out pw, out ph);
                                     var wb = new WriteableBitmap(pw, ph, 96, 96,
                                         System.Windows.Media.PixelFormats.Bgra32, null);
                                     wb.WritePixels(new System.Windows.Int32Rect(0, 0, pw, ph), previewRaw, pw * 4, 0);
@@ -626,6 +628,32 @@ public class WebRtcService : IAsyncDisposable
         using (var g = Graphics.FromImage(bmp))
             g.CopyFromScreen(x, y, 0, 0, new Size(w, h));
         return BitmapToBgra(bmp, w, h);
+    }
+
+    private static byte[] DownscaleBgra(byte[] source, int width, int height, int maxWidth, out int outWidth, out int outHeight)
+    {
+        if (width <= maxWidth)
+        {
+            outWidth = width;
+            outHeight = height;
+            return source;
+        }
+
+        outWidth = maxWidth;
+        outHeight = Math.Max(1, (int)Math.Round(height * (maxWidth / (double)width)));
+        var scaled = new byte[outWidth * outHeight * 4];
+
+        for (int y = 0; y < outHeight; y++)
+        {
+            int srcY = Math.Min(height - 1, (int)(y * (height / (double)outHeight)));
+            for (int x = 0; x < outWidth; x++)
+            {
+                int srcX = Math.Min(width - 1, (int)(x * (width / (double)outWidth)));
+                Buffer.BlockCopy(source, ((srcY * width) + srcX) * 4, scaled, ((y * outWidth) + x) * 4, 4);
+            }
+        }
+
+        return scaled;
     }
 
     private static byte[] BitmapToBgra(Bitmap bmp, int w, int h)
