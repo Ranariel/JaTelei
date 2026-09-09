@@ -157,22 +157,10 @@
             <Border Grid.Row="0" Background="#10191D" BorderBrush="#1F2E34" BorderThickness="0,0,0,1" Padding="22,0">
                 <Grid>
                     <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
                         <ColumnDefinition Width="*"/>
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
-                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                        <TextBlock Text="Sala " Foreground="#C4CED1" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,4,8,0"/>
-                        <TextBlock Text="{Binding SessionCode}" Foreground="#FFFFFF" FontSize="25" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                    </StackPanel>
-                    <Button Grid.Column="1" Command="{Binding CopyInviteCommand}" Style="{StaticResource BtnSecondary}" Padding="14,8" Margin="22,0,0,0" VerticalAlignment="Center">
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE8C8;" FontFamily="Segoe MDL2 Assets" FontSize="15" Margin="0,0,8,0"/>
-                            <TextBlock Text="Copiar convite"/>
-                        </StackPanel>
-                    </Button>
-                    <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
                         <Border Background="#102D28" BorderBrush="#1E8F75" BorderThickness="1" CornerRadius="8" Padding="13,8" Margin="0,0,14,0">
                             <StackPanel Orientation="Horizontal">
                                 <Ellipse Width="10" Height="10" Fill="#28E49F" Margin="0,0,10,0" VerticalAlignment="Center"/>
