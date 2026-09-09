@@ -78,8 +78,9 @@ public partial class MainWindow : Window
         _pendingUpdate = update;
         Dispatcher.Invoke(() =>
         {
-            UpdateText.Text = $"Nova versão {update.Version} disponível!";
+            UpdateText.Text = $"A versão {update.Version} do JaTelei está disponível. Você está usando a {AppVersion.Current}.";
             UpdateBanner.Visibility = Visibility.Visible;
+            UpdateButton.Focus();
         });
     }
 
@@ -87,8 +88,14 @@ public partial class MainWindow : Window
     {
         if (_pendingUpdate is null) return;
         UpdateButton.IsEnabled = false;
-        UpdateText.Text = "Baixando atualização...";
+        UpdateLaterButton.IsEnabled = false;
+        UpdateText.Text = "Baixando atualização. O JaTelei vai reiniciar sozinho quando terminar.";
         await UpdateService.DownloadAndRestartAsync(_pendingUpdate);
+    }
+
+    private void UpdateLaterButton_Click(object sender, RoutedEventArgs e)
+    {
+        UpdateBanner.Visibility = Visibility.Collapsed;
     }
 
     // ── Login ──────────────────────────────────────────────────────────────
