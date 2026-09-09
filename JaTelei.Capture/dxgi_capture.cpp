@@ -579,6 +579,23 @@ static HRESULT InitEncoder(EngineState* e)
     hr = e->encoder->SetInputType(0, inMT.Get(), 0);
     CHECK_HR(hr, "SetInputType");
 
+    // Rate control: ask hardware MFTs for CBR. Some GPU drivers still treat this
+    // as a target, but it prevents the old loose/VBR behavior where possible.
+    {
+        ComPtr<ICodecAPI> codecApi;
+        ICodecAPI* rawCodecApi = nullptr;
+        if (SUCCEEDED(e->encoder->QueryInterface(IID_PPV_ARGS(&rawCodecApi)))) {
+            codecApi.Attach(rawCodecApi);
+            VARIANT mode = {}; mode.vt = VT_UI4;
+            mode.uintVal = eAVEncCommonRateControlMode_CBR;
+            codecApi->SetValue(&CODECAPI_AVEncCommonRateControlMode, &mode);
+
+            VARIANT bitrate = {}; bitrate.vt = VT_UI4;
+            bitrate.uintVal = (UINT)(e->params.bitrateKbps * 1000);
+            codecApi->SetValue(&CODECAPI_AVEncCommonMeanBitRate, &bitrate);
+        }
+    }
+
     // Output type: H264/AV1
     ComPtr<IMFMediaType> outMT;
     MFCreateMediaType(&outMT);
@@ -1130,6 +1147,10 @@ JCAPI void JC_SetBitrate(int bitrateKbps)
         VARIANT v = {}; v.vt = VT_UI4;
         v.uintVal = (UINT)(bitrateKbps * 1000);
         codec->SetValue(&CODECAPI_AVEncCommonMeanBitRate, &v);
+
+        VARIANT mode = {}; mode.vt = VT_UI4;
+        mode.uintVal = eAVEncCommonRateControlMode_CBR;
+        codec->SetValue(&CODECAPI_AVEncCommonRateControlMode, &mode);
     }
     g_eng->params.bitrateKbps = bitrateKbps;
 }

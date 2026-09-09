@@ -367,7 +367,9 @@ namespace JaTelei.Client.Services
             // texto/borda recebe mais bits, áreas planas menos → menos pixelação em movimento
             // intra-refresh=0: desabilitar varredura top→bottom (causa do rodapé pixelado com zerolatency);
             // me=hex: motion estimation rápida — umh é pesada demais para 60fps em software
-            LogOpt(logPath, "x264-params", "intra-refresh=0:aq-mode=1:me=hex:force-cfr=1:qpmax=30");
+            LogOpt(logPath, "maxrate", bitrateBps.ToString());
+            LogOpt(logPath, "bufsize", (bitrateBps / 2).ToString());
+            LogOpt(logPath, "x264-params", $"intra-refresh=0:aq-mode=1:me=hex:force-cfr=1:nal-hrd=cbr:filler=1:qpmax=30:vbv-maxrate={bitrateBps / 1000}:vbv-bufsize={Math.Max(500, bitrateBps / 2000)}");
 
             // Verify the direct writes landed correctly.
             File.AppendAllText(logPath,

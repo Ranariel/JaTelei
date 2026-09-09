@@ -33,7 +33,7 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     public string QualityLabel => FormatResolution(SelectedResolutionHeight);
     public string FrameRateLabel => $"{SelectedFps} fps";
     public string LatencyLabel => IsSharing ? (CurrentLatencyMs > 0 ? $"Atraso {CurrentLatencyMs} ms" : "Medindo") : "Aguardando";
-    public string UploadLabel => IsSharing ? $"{CurrentUploadKbps} kbps" : "0 kbps";
+    public string UploadLabel => IsSharing ? $"Atual {CurrentUploadKbps} kbps" : "Atual 0 kbps";
     public string TargetBitrateLabel => $"{GetRecommendedBitrateKbps(SelectedResolutionHeight)} kbps";
     public string PacketLossLabel => IsSharing ? $"Perda {PacketLossPermille / 10.0:F1}%" : "Perda 0.0%";
     public string EncoderBitrateLabel => IsSharing && EncoderBitrateKbps > 0 ? $"Encoder {EncoderBitrateKbps} kbps" : $"Encoder {GetRecommendedBitrateKbps(SelectedResolutionHeight)} kbps";
