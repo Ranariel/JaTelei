@@ -180,7 +180,7 @@ public class WebRtcService : IAsyncDisposable
         _pc.OnRtpPacketReceived += (ep, mediaType, rtpPacket) =>
         {
             if (mediaType != SDPMediaTypesEnum.audio) return;
-            _avSync.ReportAudio((long)rtpPacket.Header.Timestamp * 1_000_000L / 48000);
+            _avSync.ReportAudio((long)rtpPacket.Header.Timestamp * 10_000_000L / 48000);
             _audioEngine.OnOpusReceived(rtpPacket.Payload);
         };
 
