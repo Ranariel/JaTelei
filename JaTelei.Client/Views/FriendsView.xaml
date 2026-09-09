@@ -122,38 +122,6 @@
                             <TextBlock Text="Compartilhar" FontSize="14" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
-                    <Button Margin="0,0,0,8" Command="{Binding ShowSessionCommand}">
-                        <Button.Style>
-                            <Style TargetType="Button" BasedOn="{StaticResource NavButton}">
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsSessionSection}" Value="True">
-                                        <Setter Property="Background" Value="#143530"/>
-                                        <Setter Property="Foreground" Value="#FFFFFF"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE71B;" FontFamily="Segoe MDL2 Assets" FontSize="18" Width="32"/>
-                            <TextBlock Text="Sessao" FontSize="14" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
-                    <Button Margin="0,0,0,8" Command="{Binding ShowDevicesCommand}">
-                        <Button.Style>
-                            <Style TargetType="Button" BasedOn="{StaticResource NavButton}">
-                                <Style.Triggers>
-                                    <DataTrigger Binding="{Binding IsDevicesSection}" Value="True">
-                                        <Setter Property="Background" Value="#143530"/>
-                                        <Setter Property="Foreground" Value="#FFFFFF"/>
-                                    </DataTrigger>
-                                </Style.Triggers>
-                            </Style>
-                        </Button.Style>
-                        <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="&#xE772;" FontFamily="Segoe MDL2 Assets" FontSize="18" Width="32"/>
-                            <TextBlock Text="Dispositivos" FontSize="14" VerticalAlignment="Center"/>
-                        </StackPanel>
-                    </Button>
                     <Button Command="{Binding ShowSettingsCommand}">
                         <Button.Style>
                             <Style TargetType="Button" BasedOn="{StaticResource NavButton}">
@@ -167,7 +135,7 @@
                         </Button.Style>
                         <StackPanel Orientation="Horizontal">
                             <TextBlock Text="&#xE713;" FontFamily="Segoe MDL2 Assets" FontSize="18" Width="32"/>
-                            <TextBlock Text="Configuracoes" FontSize="14" VerticalAlignment="Center"/>
+                            <TextBlock Text="Configurações" FontSize="14" VerticalAlignment="Center"/>
                         </StackPanel>
                     </Button>
                 </StackPanel>
@@ -422,7 +390,7 @@
             <Grid Grid.Row="1" Margin="22" Visibility="{Binding IsSettingsSection, Converter={StaticResource BoolToVis}}">
                 <Border Style="{StaticResource Panel}" Padding="26">
                     <StackPanel MaxWidth="760">
-                        <TextBlock Text="Configuracoes" Foreground="#FFFFFF" FontSize="28" FontWeight="SemiBold"/>
+                        <TextBlock Text="Configurações" Foreground="#FFFFFF" FontSize="28" FontWeight="SemiBold"/>
                         <TextBlock Text="Ajustes basicos do aplicativo e da experiencia de compartilhamento." Foreground="#9CABAF" FontSize="14" Margin="0,8,0,24"/>
                         <UniformGrid Rows="1" Columns="2">
                             <Border Background="#10191D" BorderBrush="#2A3940" BorderThickness="1" CornerRadius="8" Padding="18" Margin="0,0,12,0">
