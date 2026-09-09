@@ -123,6 +123,10 @@ public static class ScreenCaptureService
     private static extern void JC_GetOutputSize(out int width, out int height);
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
+    private static extern int JC_GetPreviewFrame(
+        IntPtr outBgraBuffer, int bgraBufferSize, out int outWidth, out int outHeight);
+
+    [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
     private static extern void JC_Release();
 
     [DllImport(DllName, CallingConvention = CallingConvention.Cdecl)]
@@ -251,6 +255,20 @@ public static class ScreenCaptureService
 
     // ── Capture + Encode ──────────────────────────────────────────────────────
 
+    public readonly struct PreviewFrame
+    {
+        public readonly byte[] Bgra;
+        public readonly int Width;
+        public readonly int Height;
+
+        public PreviewFrame(byte[] bgra, int width, int height)
+        {
+            Bgra = bgra;
+            Width = width;
+            Height = height;
+        }
+    }
+
     public readonly struct CaptureResult
     {
         public readonly byte[]? Video;
@@ -301,6 +319,28 @@ public static class ScreenCaptureService
     {
         var r = CaptureFrame();
         return r.Video;
+    }
+
+    public static PreviewFrame? GetPreviewFrame()
+    {
+        if (!_initialized) return null;
+
+        var capacity = 64 * 1024 * 1024;
+        var buffer = Marshal.AllocHGlobal(capacity);
+        try
+        {
+            var hr = JC_GetPreviewFrame(buffer, capacity, out int width, out int height);
+            if (hr != 0 || width <= 0 || height <= 0) return null;
+
+            var size = width * height * 4;
+            var bgra = new byte[size];
+            Marshal.Copy(buffer, bgra, 0, size);
+            return new PreviewFrame(bgra, width, height);
+        }
+        finally
+        {
+            Marshal.FreeHGlobal(buffer);
+        }
     }
 
     // ── Control ───────────────────────────────────────────────────────────────

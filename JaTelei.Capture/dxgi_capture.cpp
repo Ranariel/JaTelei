@@ -207,6 +207,12 @@ struct EngineState {
     // CPU staging fallback
     ComPtr<ID3D11Texture2D>        stagingTex;
 
+    // Latest BGRA source frame for local preview.
+    std::mutex                     previewMtx;
+    ComPtr<ID3D11Texture2D>        previewTex;
+    int                            previewWidth = 0;
+    int                            previewHeight = 0;
+
     // MFT encoder
     ComPtr<IMFTransform>           encoder;
     ComPtr<IMFDXGIDeviceManager>   devMgr;
@@ -797,6 +803,15 @@ static bool CaptureFrameToNV12(EngineState* e)
         return false;
     }
 
+    {
+        D3D11_TEXTURE2D_DESC pd = {};
+        srcTex->GetDesc(&pd);
+        std::lock_guard<std::mutex> lk(e->previewMtx);
+        e->previewTex = srcTex;
+        e->previewWidth = (int)pd.Width;
+        e->previewHeight = (int)pd.Height;
+    }
+
     // Create input view for this source texture
     HRESULT hr = CreateInputView(e, srcTex.Get());
     if (FAILED(hr)) {
@@ -1047,6 +1062,54 @@ JCAPI int JC_CaptureAndEncode(
         }
     }
     return SUCCEEDED(hr) ? S_OK : hr;
+}
+
+JCAPI int JC_GetPreviewFrame(uint8_t* outBgraBuffer, int bgraBufferSize, int* outWidth, int* outHeight)
+{
+    if (outWidth) *outWidth = 0;
+    if (outHeight) *outHeight = 0;
+    if (!g_eng || !g_eng->initialized || !outBgraBuffer || bgraBufferSize <= 0) return E_INVALIDARG;
+
+    ComPtr<ID3D11Texture2D> src;
+    int w = 0, h = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_eng->previewMtx);
+        src = g_eng->previewTex;
+        w = g_eng->previewWidth;
+        h = g_eng->previewHeight;
+    }
+    if (!src || w <= 0 || h <= 0) return S_FALSE;
+
+    int needed = w * h * 4;
+    if (bgraBufferSize < needed) {
+        if (outWidth) *outWidth = w;
+        if (outHeight) *outHeight = h;
+        return HRESULT_FROM_WIN32(ERROR_INSUFFICIENT_BUFFER);
+    }
+
+    D3D11_TEXTURE2D_DESC td = {};
+    src->GetDesc(&td);
+    td.Usage = D3D11_USAGE_STAGING;
+    td.BindFlags = 0;
+    td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+    td.MiscFlags = 0;
+
+    ComPtr<ID3D11Texture2D> staging;
+    HRESULT hr = g_eng->d3dDevice->CreateTexture2D(&td, nullptr, &staging);
+    if (FAILED(hr)) return hr;
+
+    g_eng->d3dCtx->CopyResource(staging.Get(), src.Get());
+    D3D11_MAPPED_SUBRESOURCE mapped = {};
+    hr = g_eng->d3dCtx->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    if (FAILED(hr)) return hr;
+
+    for (int y = 0; y < h; y++)
+        memcpy(outBgraBuffer + y * w * 4, (BYTE*)mapped.pData + y * mapped.RowPitch, w * 4);
+
+    g_eng->d3dCtx->Unmap(staging.Get(), 0);
+    if (outWidth) *outWidth = w;
+    if (outHeight) *outHeight = h;
+    return S_OK;
 }
 
 JCAPI void JC_ForceKeyframe(void)

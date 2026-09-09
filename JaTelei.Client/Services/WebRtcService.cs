@@ -61,6 +61,11 @@ public class WebRtcService : IAsyncDisposable
     private int  _previewCount;
     private long _statsBytes;
     private DateTime _lastStatsAt = DateTime.UtcNow;
+    private int _targetBitrateKbps;
+    private int _currentBitrateKbps;
+    private int _rtcpLossPermille;
+    private int _rtcpRttMs;
+    private DateTime _lastBitrateAdjustAt = DateTime.MinValue;
 
     // Normalised RTP timestamp anchors (receiver side).
     // RTP timestamps start at a random offset; we subtract the first-seen
@@ -73,7 +78,7 @@ public class WebRtcService : IAsyncDisposable
     private static void Log(string msg) =>
         File.AppendAllText(LogPath, $"[WebRTC] {DateTime.Now:HH:mm:ss.fff} {msg}\n");
 
-    public readonly record struct NetworkStats(int UploadKbps, int PipelineDelayMs, int FramesSent);
+    public readonly record struct NetworkStats(int UploadKbps, int PipelineDelayMs, int FramesSent, int LossPermille, int RttMs, int EncoderBitrateKbps);
     public event Action<NetworkStats>? NetworkStatsUpdated;
 
     // ── ICE / RTC config ──────────────────────────────────────────────────────
@@ -149,6 +154,7 @@ public class WebRtcService : IAsyncDisposable
     public async Task<string> CreateOfferAsync()
     {
         _pc = new RTCPeerConnection(RtcConfig);
+        WireSenderReports();
 
         var videoTrack = new MediaStreamTrack(
             new List<VideoFormat> { new VideoFormat(VideoCodecsEnum.H264, 96) },
@@ -364,6 +370,11 @@ public class WebRtcService : IAsyncDisposable
         int effectiveFps = target?.Fps > 0 ? target.Fps : fps;
         int targetHeight = target?.ResolutionHeight ?? 0;
         int bitrateKbps  = FriendsViewModel.GetRecommendedBitrateKbps(targetHeight);
+        _targetBitrateKbps = bitrateKbps;
+        _currentBitrateKbps = bitrateKbps;
+        _rtcpLossPermille = 0;
+        _rtcpRttMs = 0;
+        _lastBitrateAdjustAt = DateTime.UtcNow;
 
         uint rtpDuration = (uint)(90_000.0 / effectiveFps);
         var  delay       = TimeSpan.FromMilliseconds(1000.0 / effectiveFps);
@@ -526,6 +537,7 @@ public class WebRtcService : IAsyncDisposable
                                     _pc?.SendVideo(rtpDuration, jf.Data);
                                     _framesSent++;
                                     _statsBytes += jf.Data.Length;
+                                    AdjustBitrateFromRtcp();
 
                                     if (_framesSent <= 15 || _framesSent % 300 == 0)
                                     {
@@ -546,16 +558,26 @@ public class WebRtcService : IAsyncDisposable
                         {
                             try
                             {
-                                byte[]? previewRaw;
-                                int pw;
-                                int ph;
+                                byte[]? previewRaw = null;
+                                int pw = 0;
+                                int ph = 0;
 
-                                if (target?.WindowHandle is { } previewHwnd && previewHwnd != IntPtr.Zero)
+                                if (dllReady && ScreenCaptureService.GetPreviewFrame() is { } previewFrame)
+                                {
+                                    previewRaw = previewFrame.Bgra;
+                                    pw = previewFrame.Width;
+                                    ph = previewFrame.Height;
+                                }
+                                else if (target?.WindowHandle is { } previewHwnd && previewHwnd != IntPtr.Zero)
+                                {
                                     previewRaw = CaptureWindow(previewHwnd, out pw, out ph);
+                                }
                                 else if (target?.MonitorBounds is System.Windows.Rect previewBounds)
+                                {
                                     previewRaw = CaptureRegion(
                                         (int)previewBounds.X, (int)previewBounds.Y,
                                         (int)previewBounds.Width, (int)previewBounds.Height, out pw, out ph);
+                                }
                                 else
                                 {
                                     int scrW = (int)System.Windows.SystemParameters.PrimaryScreenWidth;
@@ -607,6 +629,55 @@ public class WebRtcService : IAsyncDisposable
     // GDI helpers (fallback)
     // =========================================================================
 
+    private void WireSenderReports()
+    {
+        _pc!.OnReceiveReport += (_, mediaType, report) =>
+        {
+            if (mediaType != SDPMediaTypesEnum.video) return;
+            var reports = report.ReceiverReport?.ReceptionReports ?? report.SenderReport?.ReceptionReports;
+            if (reports == null) return;
+
+            foreach (var rr in reports)
+            {
+                _rtcpLossPermille = (int)Math.Round(rr.FractionLost * 1000.0 / 256.0);
+                if (rr.LastSenderReportTimestamp != 0)
+                {
+                    var rttUnits = unchecked(CompactNtpNow() - rr.LastSenderReportTimestamp - rr.DelaySinceLastSenderReport);
+                    if (rttUnits < 0x80000000)
+                        _rtcpRttMs = (int)Math.Round(rttUnits * 1000.0 / 65536.0);
+                }
+            }
+        };
+    }
+
+    private void AdjustBitrateFromRtcp()
+    {
+        if (_targetBitrateKbps <= 0 || (DateTime.UtcNow - _lastBitrateAdjustAt).TotalSeconds < 3) return;
+
+        var next = _currentBitrateKbps;
+        if (_rtcpLossPermille >= 30 || _rtcpRttMs >= 220)
+            next = Math.Max(1000, (int)Math.Round(_currentBitrateKbps * 0.85));
+        else if (_rtcpLossPermille <= 5 && (_rtcpRttMs == 0 || _rtcpRttMs <= 140) && _currentBitrateKbps < _targetBitrateKbps)
+            next = Math.Min(_targetBitrateKbps, _currentBitrateKbps + 500);
+
+        if (next == _currentBitrateKbps) return;
+
+        _currentBitrateKbps = next;
+        _lastBitrateAdjustAt = DateTime.UtcNow;
+        if (ScreenCaptureService.IsInitialized) ScreenCaptureService.SetBitrate(next);
+        Log($"Bitrate adaptado para {next} kbps loss={_rtcpLossPermille / 10.0:F1}% rtt={_rtcpRttMs}ms");
+    }
+
+    private static uint CompactNtpNow()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var ntpEpoch = new DateTimeOffset(1900, 1, 1, 0, 0, 0, TimeSpan.Zero);
+        var elapsed = now - ntpEpoch;
+        var seconds = (uint)elapsed.TotalSeconds;
+        var fraction = (uint)((elapsed.TotalSeconds - Math.Floor(elapsed.TotalSeconds)) * uint.MaxValue);
+        return (seconds << 16) | (fraction >> 16);
+    }
+
     private void PublishNetworkStats(DateTime frameStartedAt)
     {
         var now = DateTime.UtcNow;
@@ -614,10 +685,10 @@ public class WebRtcService : IAsyncDisposable
         if (elapsed < 1.0) return;
 
         var kbps = (int)Math.Round((_statsBytes * 8.0) / 1000.0 / Math.Max(elapsed, 0.001));
-        var delayMs = Math.Max(1, (int)Math.Round((now - frameStartedAt).TotalMilliseconds));
+        var delayMs = _rtcpRttMs > 0 ? _rtcpRttMs : Math.Max(1, (int)Math.Round((now - frameStartedAt).TotalMilliseconds));
         _statsBytes = 0;
         _lastStatsAt = now;
-        NetworkStatsUpdated?.Invoke(new NetworkStats(kbps, delayMs, _framesSent));
+        NetworkStatsUpdated?.Invoke(new NetworkStats(kbps, delayMs, _framesSent, _rtcpLossPermille, _rtcpRttMs, _currentBitrateKbps));
     }
 
     private static byte[] CaptureWindow(IntPtr hwnd, out int width, out int height)
