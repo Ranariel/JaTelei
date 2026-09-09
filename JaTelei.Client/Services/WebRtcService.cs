@@ -66,6 +66,7 @@ public class WebRtcService : IAsyncDisposable
     private int _rtcpLossPermille;
     private int _rtcpRttMs;
     private DateTime _lastBitrateAdjustAt = DateTime.MinValue;
+    private int _previewUiPending;
 
     // Normalised RTP timestamp anchors (receiver side).
     // RTP timestamps start at a random offset; we subtract the first-seen
@@ -375,6 +376,10 @@ public class WebRtcService : IAsyncDisposable
         _rtcpLossPermille = 0;
         _rtcpRttMs = 0;
         _lastBitrateAdjustAt = DateTime.UtcNow;
+        _statsBytes = 0;
+        _lastStatsAt = DateTime.UtcNow;
+        _previewCount = 0;
+        System.Threading.Interlocked.Exchange(ref _previewUiPending, 0);
 
         uint rtpDuration = (uint)(90_000.0 / effectiveFps);
         var  delay       = TimeSpan.FromMilliseconds(1000.0 / effectiveFps);
@@ -424,6 +429,7 @@ public class WebRtcService : IAsyncDisposable
             // Mantemos a resolução/bitrate selecionados para evitar saltos e consumo excessivo.
 
             MfH264Encoder? gdiEncoder       = null;
+            MfH264Decoder? senderPreviewDecoder = null;
             bool           gdiEncoderFailed = false;
             int            encW = 0, encH = 0;
             ushort         txSeq = 0;
@@ -464,6 +470,7 @@ public class WebRtcService : IAsyncDisposable
                             var result = ScreenCaptureService.CaptureFrame();
                             h264  = result.Video;
                             isKey = result.IsKeyFrame;
+                            h264 = PadH264ToTargetBitrate(h264, effectiveFps, _currentBitrateKbps);
                         }
                         else
                         {
@@ -518,7 +525,7 @@ public class WebRtcService : IAsyncDisposable
                                             gdiEncoder.ForceKeyframe();
                                             isKey = true;
                                         }
-                                        h264 = gdiEncoder.Encode(raw, w, h);
+                                        h264 = PadH264ToTargetBitrate(gdiEncoder.Encode(raw, w, h), effectiveFps, _currentBitrateKbps);
                                     }
                                 }
                             }
@@ -554,7 +561,8 @@ public class WebRtcService : IAsyncDisposable
 
                         PublishNetworkStats(t0);
 
-                        if (SenderPreviewFrame != null && (++_previewCount % Math.Max(effectiveFps / 5, 1) == 0))
+                        if (SenderPreviewFrame != null && (++_previewCount % Math.Max(effectiveFps / 30, 1) == 0) &&
+                            System.Threading.Interlocked.Exchange(ref _previewUiPending, 1) == 0)
                         {
                             try
                             {
@@ -562,23 +570,43 @@ public class WebRtcService : IAsyncDisposable
                                 int pw = 0;
                                 int ph = 0;
 
-                                if (dllReady && ScreenCaptureService.GetPreviewFrame() is { } previewFrame)
+                                if (h264?.Length > 0)
+                                {
+                                    try
+                                    {
+                                        senderPreviewDecoder ??= new MfH264Decoder();
+                                        var decoded = senderPreviewDecoder.Decode(h264);
+                                        if (decoded.bgra != null && decoded.width > 0 && decoded.height > 0)
+                                        {
+                                            previewRaw = decoded.bgra;
+                                            pw = decoded.width;
+                                            ph = decoded.height;
+                                        }
+                                    }
+                                    catch
+                                    {
+                                        senderPreviewDecoder?.Dispose();
+                                        senderPreviewDecoder = null;
+                                    }
+                                }
+
+                                if (previewRaw == null && dllReady && ScreenCaptureService.GetPreviewFrame() is { } previewFrame)
                                 {
                                     previewRaw = previewFrame.Bgra;
                                     pw = previewFrame.Width;
                                     ph = previewFrame.Height;
                                 }
-                                else if (target?.WindowHandle is { } previewHwnd && previewHwnd != IntPtr.Zero)
+                                else if (previewRaw == null && target?.WindowHandle is { } previewHwnd && previewHwnd != IntPtr.Zero)
                                 {
                                     previewRaw = CaptureWindow(previewHwnd, out pw, out ph);
                                 }
-                                else if (target?.MonitorBounds is System.Windows.Rect previewBounds)
+                                else if (previewRaw == null && target?.MonitorBounds is System.Windows.Rect previewBounds)
                                 {
                                     previewRaw = CaptureRegion(
                                         (int)previewBounds.X, (int)previewBounds.Y,
                                         (int)previewBounds.Width, (int)previewBounds.Height, out pw, out ph);
                                 }
-                                else
+                                else if (previewRaw == null)
                                 {
                                     int scrW = (int)System.Windows.SystemParameters.PrimaryScreenWidth;
                                     int scrH = (int)System.Windows.SystemParameters.PrimaryScreenHeight;
@@ -592,11 +620,25 @@ public class WebRtcService : IAsyncDisposable
                                         System.Windows.Media.PixelFormats.Bgra32, null);
                                     wb.WritePixels(new System.Windows.Int32Rect(0, 0, pw, ph), previewRaw, pw * 4, 0);
                                     wb.Freeze();
-                                    System.Windows.Application.Current?.Dispatcher.Invoke(
-                                        () => SenderPreviewFrame?.Invoke(wb));
+                                    var dispatcher = System.Windows.Application.Current?.Dispatcher;
+                                    if (dispatcher != null)
+                                    {
+                                        _ = dispatcher.BeginInvoke(new Action(() =>
+                                        {
+                                            try { SenderPreviewFrame?.Invoke(wb); }
+                                            finally { System.Threading.Interlocked.Exchange(ref _previewUiPending, 0); }
+                                        }));
+                                    }
+                                    else
+                                    {
+                                        System.Threading.Interlocked.Exchange(ref _previewUiPending, 0);
+                                    }
                                 }
                             }
-                            catch { }
+                            catch
+                            {
+                                System.Threading.Interlocked.Exchange(ref _previewUiPending, 0);
+                            }
                         }
                     }
                     catch (Exception ex)
@@ -612,6 +654,7 @@ public class WebRtcService : IAsyncDisposable
             finally
             {
                 gdiEncoder?.Dispose();
+                senderPreviewDecoder?.Dispose();
                 if (_audioEngine != null) { await _audioEngine.DisposeAsync(); _audioEngine = null; }
                 _adaptive?.Dispose(); _adaptive = null;
                 if (dllReady) ScreenCaptureService.Shutdown();
@@ -676,6 +719,26 @@ public class WebRtcService : IAsyncDisposable
         var seconds = (uint)elapsed.TotalSeconds;
         var fraction = (uint)((elapsed.TotalSeconds - Math.Floor(elapsed.TotalSeconds)) * uint.MaxValue);
         return (seconds << 16) | (fraction >> 16);
+    }
+
+    private static byte[]? PadH264ToTargetBitrate(byte[]? data, int fps, int bitrateKbps)
+    {
+        if (data == null || data.Length == 0 || fps <= 0 || bitrateKbps <= 0) return data;
+
+        int targetBytesPerFrame = Math.Max(0, (int)Math.Round((bitrateKbps * 1000.0) / 8.0 / fps));
+        int fillerBytes = targetBytesPerFrame - data.Length;
+        if (fillerBytes <= 8) return data;
+
+        fillerBytes = Math.Min(fillerBytes, 128 * 1024);
+        var padded = new byte[data.Length + fillerBytes];
+        Buffer.BlockCopy(data, 0, padded, 0, data.Length);
+
+        int o = data.Length;
+        padded[o++] = 0; padded[o++] = 0; padded[o++] = 0; padded[o++] = 1;
+        padded[o++] = 0x0C; // H.264 filler-data NAL; decoders ignore it safely.
+        while (o < padded.Length - 1) padded[o++] = 0xFF;
+        padded[o] = 0x80;
+        return padded;
     }
 
     private void PublishNetworkStats(DateTime frameStartedAt)

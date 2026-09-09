@@ -210,8 +210,11 @@ struct EngineState {
     // Latest BGRA source frame for local preview.
     std::mutex                     previewMtx;
     ComPtr<ID3D11Texture2D>        previewTex;
+    ComPtr<ID3D11Texture2D>        previewStagingTex;
     int                            previewWidth = 0;
     int                            previewHeight = 0;
+    int                            previewStagingWidth = 0;
+    int                            previewStagingHeight = 0;
 
     // MFT encoder
     ComPtr<IMFTransform>           encoder;
@@ -1111,19 +1114,23 @@ JCAPI int JC_GetPreviewFrame(uint8_t* outBgraBuffer, int bgraBufferSize, int* ou
     td.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
     td.MiscFlags = 0;
 
-    ComPtr<ID3D11Texture2D> staging;
-    HRESULT hr = g_eng->d3dDevice->CreateTexture2D(&td, nullptr, &staging);
-    if (FAILED(hr)) return hr;
+    if (!g_eng->previewStagingTex || g_eng->previewStagingWidth != w || g_eng->previewStagingHeight != h) {
+        g_eng->previewStagingTex.Reset();
+        HRESULT chr = g_eng->d3dDevice->CreateTexture2D(&td, nullptr, &g_eng->previewStagingTex);
+        if (FAILED(chr)) return chr;
+        g_eng->previewStagingWidth = w;
+        g_eng->previewStagingHeight = h;
+    }
 
-    g_eng->d3dCtx->CopyResource(staging.Get(), src.Get());
+    g_eng->d3dCtx->CopyResource(g_eng->previewStagingTex.Get(), src.Get());
     D3D11_MAPPED_SUBRESOURCE mapped = {};
-    hr = g_eng->d3dCtx->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped);
+    HRESULT hr = g_eng->d3dCtx->Map(g_eng->previewStagingTex.Get(), 0, D3D11_MAP_READ, 0, &mapped);
     if (FAILED(hr)) return hr;
 
     for (int y = 0; y < h; y++)
         memcpy(outBgraBuffer + y * w * 4, (BYTE*)mapped.pData + y * mapped.RowPitch, w * 4);
 
-    g_eng->d3dCtx->Unmap(staging.Get(), 0);
+    g_eng->d3dCtx->Unmap(g_eng->previewStagingTex.Get(), 0);
     if (outWidth) *outWidth = w;
     if (outHeight) *outHeight = h;
     return S_OK;
