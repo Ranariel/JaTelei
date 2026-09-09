@@ -25,6 +25,8 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     [ObservableProperty] private int _selectedFps = 30;
     [ObservableProperty] private int _currentUploadKbps;
     [ObservableProperty] private int _currentLatencyMs;
+    [ObservableProperty] private int _packetLossPermille;
+    [ObservableProperty] private int _encoderBitrateKbps;
 
     public string SessionCode { get; } = $"JT-{Random.Shared.Next(1000, 9999)}";
     public string SessionLink => $"https://jatelei.com/sala/{SessionCode}";
@@ -33,6 +35,8 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     public string LatencyLabel => IsSharing ? (CurrentLatencyMs > 0 ? $"Atraso {CurrentLatencyMs} ms" : "Medindo") : "Aguardando";
     public string UploadLabel => IsSharing ? $"{CurrentUploadKbps} kbps" : "0 kbps";
     public string TargetBitrateLabel => $"{GetRecommendedBitrateKbps(SelectedResolutionHeight)} kbps";
+    public string PacketLossLabel => IsSharing ? $"Perda {PacketLossPermille / 10.0:F1}%" : "Perda 0.0%";
+    public string EncoderBitrateLabel => IsSharing && EncoderBitrateKbps > 0 ? $"Encoder {EncoderBitrateKbps} kbps" : $"Encoder {GetRecommendedBitrateKbps(SelectedResolutionHeight)} kbps";
     public string SharingStatus => IsSharing ? (IsPaused ? "Pausado" : "Compartilhando tela") : "Pronto para compartilhar";
     public string ViewerCountText => IsSharing ? "1 conectado" : "0 conectado";
     public string ViewerStatus => IsSharing ? "Visualizador conectado" : "Nenhum visualizador";
@@ -105,6 +109,16 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     partial void OnCurrentLatencyMsChanged(int value)
     {
         OnPropertyChanged(nameof(LatencyLabel));
+    }
+
+    partial void OnPacketLossPermilleChanged(int value)
+    {
+        OnPropertyChanged(nameof(PacketLossLabel));
+    }
+
+    partial void OnEncoderBitrateKbpsChanged(int value)
+    {
+        OnPropertyChanged(nameof(EncoderBitrateLabel));
     }
 
     public event Action<Friend>? StartShareRequested;
@@ -184,6 +198,8 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
         SelectedFps = target.Fps;
         CurrentUploadKbps = 0;
         CurrentLatencyMs = 0;
+        PacketLossPermille = 0;
+        EncoderBitrateKbps = GetRecommendedBitrateKbps(target.ResolutionHeight);
         IsPaused = false;
         IsSharing = true;
     }
@@ -194,6 +210,8 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
         IsPaused = false;
         CurrentUploadKbps = 0;
         CurrentLatencyMs = 0;
+        PacketLossPermille = 0;
+        EncoderBitrateKbps = 0;
         SelfPreviewImage = null;
     }
 
@@ -203,6 +221,8 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     {
         CurrentUploadKbps = stats.UploadKbps;
         CurrentLatencyMs = stats.PipelineDelayMs;
+        PacketLossPermille = stats.LossPermille;
+        EncoderBitrateKbps = stats.EncoderBitrateKbps;
     }
 
     private static string FormatResolution(int height) => height switch

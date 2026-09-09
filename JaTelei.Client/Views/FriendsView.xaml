@@ -385,6 +385,11 @@
                                     <TextBlock Text="Bitrate alvo " Foreground="#9CABAF" FontSize="12"/>
                                     <TextBlock Text="{Binding TargetBitrateLabel}" Foreground="#9CABAF" FontSize="12"/>
                                 </StackPanel>
+                                <StackPanel Orientation="Horizontal" Margin="0,4,0,0">
+                                    <TextBlock Text="{Binding EncoderBitrateLabel}" Foreground="#9CABAF" FontSize="12"/>
+                                    <TextBlock Text="  " Foreground="#9CABAF" FontSize="12"/>
+                                    <TextBlock Text="{Binding PacketLossLabel}" Foreground="#9CABAF" FontSize="12"/>
+                                </StackPanel>
                             </StackPanel>
                         </Border>
                     </StackPanel>

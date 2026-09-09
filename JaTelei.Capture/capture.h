@@ -180,6 +180,10 @@ JCAPI void JC_SetBitrate(int bitrateKbps);
 /** Query actual encoded frame dimensions (may differ from requested). */
 JCAPI void JC_GetOutputSize(int* width, int* height);
 
+/** Copy the latest captured source frame as BGRA for local preview. */
+JCAPI int  JC_GetPreviewFrame(
+    uint8_t* outBgraBuffer, int bgraBufferSize, int* outWidth, int* outHeight);
+
 /**
  * Query WASAPI audio format (call after JC_Init with enableAudio=1).
  * Returns the native device sample rate and channel count for the raw PCM buffer.
