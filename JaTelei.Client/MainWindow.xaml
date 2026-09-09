@@ -7,6 +7,7 @@
         MinHeight="680" MinWidth="1120"
         Background="#0B1114"
         WindowStyle="None"
+        WindowStartupLocation="CenterScreen"
         ResizeMode="CanResize"
         FontFamily="Segoe UI">
     <WindowChrome.WindowChrome>

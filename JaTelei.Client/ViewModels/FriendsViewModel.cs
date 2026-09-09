@@ -30,6 +30,7 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     public string FrameRateLabel => $"{SelectedFps} fps";
     public string LatencyLabel => IsSharing ? "Latencia 42 ms" : "Aguardando";
     public string UploadLabel => IsSharing ? $"{GetRecommendedBitrateKbps(SelectedResolutionHeight)} kbps" : "0 kbps";
+    public string TargetBitrateLabel => $"{GetRecommendedBitrateKbps(SelectedResolutionHeight)} kbps";
     public string SharingStatus => IsSharing ? (IsPaused ? "Pausado" : "Compartilhando tela") : "Pronto para compartilhar";
     public string ViewerCountText => IsSharing ? "1 conectado" : "0 conectado";
     public string ViewerStatus => IsSharing ? "Visualizador conectado" : "Nenhum visualizador";
@@ -86,6 +87,7 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     {
         OnPropertyChanged(nameof(QualityLabel));
         OnPropertyChanged(nameof(UploadLabel));
+        OnPropertyChanged(nameof(TargetBitrateLabel));
     }
 
     partial void OnSelectedFpsChanged(int value)
