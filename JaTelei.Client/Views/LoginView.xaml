@@ -62,7 +62,10 @@
                             <TextBlock Text="Ajuda a recuperar sua conta depois." Foreground="#F6D36A" FontSize="11" Margin="0,0,0,10"/>
                         </StackPanel>
 
-                        <PasswordBox x:Name="PwdBox" Margin="0,0,0,8"/>
+                                                <Grid Margin="0,0,0,8">
+                            <PasswordBox x:Name="PwdBox"/>
+                            <TextBlock x:Name="PwdPlaceholder" Text="Senha" Foreground="#6D7B80" FontSize="13" Margin="11,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                        </Grid>
 
                         <CheckBox x:Name="ChkRemember" Margin="0,4,0,4" IsChecked="{Binding RememberMe}" Foreground="#9CABAF" FontSize="12">
                             <CheckBox.Style>

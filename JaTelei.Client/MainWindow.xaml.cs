@@ -34,6 +34,8 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Title = AppVersion.DisplayName;
+        MaxWidth = SystemParameters.WorkArea.Width;
+        MaxHeight = SystemParameters.WorkArea.Height;
 
         // Ajusta borda/padding ao maximizar para não cobrir a barra de tarefas
         StateChanged += OnStateChanged;
@@ -50,13 +52,15 @@ public partial class MainWindow : Window
         {
             // Evita cobrir a barra de tarefas do Windows
             RootBorder.BorderThickness = new Thickness(0);
-            BtnMaxRestore.Content  = "❐";
+            RootBorder.Margin = new Thickness(0, 0, 0, 8);
+            BtnMaxRestore.Content  = "\uE923";
             BtnMaxRestore.ToolTip  = "Restaurar";
         }
         else
         {
             RootBorder.BorderThickness = new Thickness(1);
-            BtnMaxRestore.Content  = "□";
+            RootBorder.Margin = new Thickness(0);
+            BtnMaxRestore.Content  = "\uE922";
             BtnMaxRestore.ToolTip  = "Maximizar";
         }
     }

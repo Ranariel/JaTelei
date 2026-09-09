@@ -32,9 +32,9 @@
                     </StackPanel>
 
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                        <Button Content="-" Style="{StaticResource BtnChrome}" Click="Minimize_Click" WindowChrome.IsHitTestVisibleInChrome="True" ToolTip="Minimizar"/>
-                        <Button x:Name="BtnMaxRestore" Content="□" Style="{StaticResource BtnChrome}" Click="MaxRestore_Click" WindowChrome.IsHitTestVisibleInChrome="True" ToolTip="Maximizar"/>
-                        <Button Content="X" Style="{StaticResource BtnChromeClose}" Click="Close_Click" WindowChrome.IsHitTestVisibleInChrome="True" ToolTip="Fechar"/>
+                        <Button Content="&#xE921;" Style="{StaticResource BtnChrome}" Click="Minimize_Click" WindowChrome.IsHitTestVisibleInChrome="True" ToolTip="Minimizar"/>
+                        <Button x:Name="BtnMaxRestore" Content="&#xE922;" Style="{StaticResource BtnChrome}" Click="MaxRestore_Click" WindowChrome.IsHitTestVisibleInChrome="True" ToolTip="Maximizar"/>
+                        <Button Content="&#xE8BB;" Style="{StaticResource BtnChromeClose}" Click="Close_Click" WindowChrome.IsHitTestVisibleInChrome="True" ToolTip="Fechar"/>
                     </StackPanel>
                 </Grid>
             </Border>

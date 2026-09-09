@@ -538,18 +538,32 @@ public class WebRtcService : IAsyncDisposable
                             }
                         }
 
-                        if (SenderPreviewFrame != null && (++_previewCount % 15 == 0))
+                        if (SenderPreviewFrame != null && (++_previewCount % Math.Max(effectiveFps * 2, 30) == 0))
                         {
                             try
                             {
-                                int scrW = (int)System.Windows.SystemParameters.PrimaryScreenWidth;
-                                int scrH = (int)System.Windows.SystemParameters.PrimaryScreenHeight;
-                                var raw2 = CaptureRegion(0, 0, scrW, scrH, out int pw, out int ph);
-                                if (raw2 != null && pw > 0 && ph > 0)
+                                byte[]? previewRaw;
+                                int pw;
+                                int ph;
+
+                                if (target?.WindowHandle is { } previewHwnd && previewHwnd != IntPtr.Zero)
+                                    previewRaw = CaptureWindow(previewHwnd, out pw, out ph);
+                                else if (target?.MonitorBounds is System.Windows.Rect previewBounds)
+                                    previewRaw = CaptureRegion(
+                                        (int)previewBounds.X, (int)previewBounds.Y,
+                                        (int)previewBounds.Width, (int)previewBounds.Height, out pw, out ph);
+                                else
+                                {
+                                    int scrW = (int)System.Windows.SystemParameters.PrimaryScreenWidth;
+                                    int scrH = (int)System.Windows.SystemParameters.PrimaryScreenHeight;
+                                    previewRaw = CaptureRegion(0, 0, scrW, scrH, out pw, out ph);
+                                }
+
+                                if (previewRaw != null && pw > 0 && ph > 0)
                                 {
                                     var wb = new WriteableBitmap(pw, ph, 96, 96,
                                         System.Windows.Media.PixelFormats.Bgra32, null);
-                                    wb.WritePixels(new System.Windows.Int32Rect(0, 0, pw, ph), raw2, pw * 4, 0);
+                                    wb.WritePixels(new System.Windows.Int32Rect(0, 0, pw, ph), previewRaw, pw * 4, 0);
                                     wb.Freeze();
                                     System.Windows.Application.Current?.Dispatcher.Invoke(
                                         () => SenderPreviewFrame?.Invoke(wb));
