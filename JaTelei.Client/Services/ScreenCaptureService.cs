@@ -102,6 +102,8 @@ public struct JcWindowInfo
 public static class ScreenCaptureService
 {
     private const string DllName = "JaTelei.Capture.dll";
+    private const int PreviewBufSize = 64 * 1024 * 1024;
+    private static IntPtr _previewBuf = IntPtr.Zero;
 
     // ── P/Invoke ─────────────────────────────────────────────────────────────
 
@@ -325,21 +327,22 @@ public static class ScreenCaptureService
     {
         if (!_initialized) return null;
 
-        var capacity = 64 * 1024 * 1024;
-        var buffer = Marshal.AllocHGlobal(capacity);
+        if (_previewBuf == IntPtr.Zero)
+            _previewBuf = Marshal.AllocHGlobal(PreviewBufSize);
+
         try
         {
-            var hr = JC_GetPreviewFrame(buffer, capacity, out int width, out int height);
+            var hr = JC_GetPreviewFrame(_previewBuf, PreviewBufSize, out int width, out int height);
             if (hr != 0 || width <= 0 || height <= 0) return null;
 
             var size = width * height * 4;
             var bgra = new byte[size];
-            Marshal.Copy(buffer, bgra, 0, size);
+            Marshal.Copy(_previewBuf, bgra, 0, size);
             return new PreviewFrame(bgra, width, height);
         }
-        finally
+        catch
         {
-            Marshal.FreeHGlobal(buffer);
+            return null;
         }
     }
 
@@ -405,6 +408,7 @@ public static class ScreenCaptureService
         JC_Release();
         if (_videoBuf != IntPtr.Zero) { Marshal.FreeHGlobal(_videoBuf); _videoBuf = IntPtr.Zero; }
         if (_audioBuf != IntPtr.Zero) { Marshal.FreeHGlobal(_audioBuf); _audioBuf = IntPtr.Zero; }
+        if (_previewBuf != IntPtr.Zero) { Marshal.FreeHGlobal(_previewBuf); _previewBuf = IntPtr.Zero; }
         _initialized = false;
         AudioEnabled = false;
         OutputWidth = OutputHeight = 0;
