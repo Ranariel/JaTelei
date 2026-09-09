@@ -21,12 +21,15 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     [ObservableProperty] private bool _includeSystemAudio = true;
     [ObservableProperty] private BitmapSource? _selfPreviewImage;
     [ObservableProperty] private string _activeSection = "share";
+    [ObservableProperty] private int _selectedResolutionHeight = 720;
+    [ObservableProperty] private int _selectedFps = 30;
 
     public string SessionCode { get; } = $"JT-{Random.Shared.Next(1000, 9999)}";
     public string SessionLink => $"https://jatelei.com/sala/{SessionCode}";
-    public string FrameRateLabel => "60 fps";
+    public string QualityLabel => FormatResolution(SelectedResolutionHeight);
+    public string FrameRateLabel => $"{SelectedFps} fps";
     public string LatencyLabel => IsSharing ? "Latencia 42 ms" : "Aguardando";
-    public string UploadLabel => IsSharing ? "12.8 Mbps" : "0 Mbps";
+    public string UploadLabel => IsSharing ? $"{GetRecommendedBitrateKbps(SelectedResolutionHeight)} kbps" : "0 kbps";
     public string SharingStatus => IsSharing ? (IsPaused ? "Pausado" : "Compartilhando tela") : "Pronto para compartilhar";
     public string ViewerCountText => IsSharing ? "1 conectado" : "0 conectado";
     public string ViewerStatus => IsSharing ? "Visualizador conectado" : "Nenhum visualizador";
@@ -77,6 +80,17 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
         OnPropertyChanged(nameof(IsSessionSection));
         OnPropertyChanged(nameof(IsDevicesSection));
         OnPropertyChanged(nameof(IsSettingsSection));
+    }
+
+    partial void OnSelectedResolutionHeightChanged(int value)
+    {
+        OnPropertyChanged(nameof(QualityLabel));
+        OnPropertyChanged(nameof(UploadLabel));
+    }
+
+    partial void OnSelectedFpsChanged(int value)
+    {
+        OnPropertyChanged(nameof(FrameRateLabel));
     }
 
     public event Action<Friend>? StartShareRequested;
@@ -148,8 +162,10 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     [RelayCommand] private void ShowDevices() => ActiveSection = "devices";
     [RelayCommand] private void ShowSettings() => ActiveSection = "settings";
 
-    public void OnSharingStarted()
+    public void OnSharingStarted(ShareTarget target)
     {
+        SelectedResolutionHeight = target.ResolutionHeight;
+        SelectedFps = target.Fps;
         IsPaused = false;
         IsSharing = true;
     }
@@ -162,4 +178,28 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     }
 
     public void OnPreviewFrame(BitmapSource img) => SelfPreviewImage = img;
+
+    private static string FormatResolution(int height) => height switch
+    {
+        0 => "Nativa",
+        1080 => "1080p",
+        720 => "720p",
+        480 => "480p",
+        360 => "360p",
+        240 => "240p",
+        160 => "160p",
+        _ => $"{height}p"
+    };
+
+    public static int GetRecommendedBitrateKbps(int height) => height switch
+    {
+        0 => 6000,
+        >= 1080 => 6000,
+        720 => 5000,
+        480 => 3500,
+        360 => 2500,
+        240 => 2000,
+        160 => 1500,
+        _ => 2000
+    };
 }
