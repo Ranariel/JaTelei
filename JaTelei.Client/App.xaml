@@ -63,13 +63,12 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="7"
-                                Padding="{TemplateBinding Padding}">
-                            <Grid>
+                                CornerRadius="7">
+                            <Grid Margin="{TemplateBinding Padding}">
                                 <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center"/>
                                 <TextBlock Text="{TemplateBinding Tag}"
                                            Foreground="#FF6D7B80"
-                                           Margin="12,0,0,0"
+                                           Margin="0"
                                            FontSize="{TemplateBinding FontSize}"
                                            VerticalAlignment="Center"
                                            IsHitTestVisible="False">
@@ -118,9 +117,8 @@
                                 Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}"
                                 BorderThickness="{TemplateBinding BorderThickness}"
-                                CornerRadius="8"
-                                Padding="{TemplateBinding Padding}">
-                            <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center"/>
+                                CornerRadius="7">
+                            <ScrollViewer x:Name="PART_ContentHost" Margin="{TemplateBinding Padding}" VerticalAlignment="Center"/>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsFocused" Value="True">

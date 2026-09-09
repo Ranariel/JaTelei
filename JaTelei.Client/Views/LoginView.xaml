@@ -64,7 +64,7 @@
 
                         <Grid Height="44" Margin="0,0,0,8">
                             <PasswordBox x:Name="PwdBox"/>
-                            <TextBlock x:Name="PwdPlaceholder" Text="Senha" Foreground="#6D7B80" FontSize="13" Margin="12,0,0,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                            <TextBlock x:Name="PwdPlaceholder" Text="Senha" Foreground="#6D7B80" FontSize="13" Margin="12,0,0,0" VerticalAlignment="Center" HorizontalAlignment="Left" IsHitTestVisible="False"/>
                         </Grid>
 
                         <TextBlock Text="Sessao mantida neste computador" Foreground="#9CABAF" FontSize="12" Margin="0,4,0,4"/>
