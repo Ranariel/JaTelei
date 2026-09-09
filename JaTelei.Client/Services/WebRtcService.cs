@@ -59,6 +59,8 @@ public class WebRtcService : IAsyncDisposable
     private volatile bool _forceGdiKeyframe;
     private volatile bool _requestDllReinit;  // triggers DLL Shutdown+Init → forces IDR
     private int  _previewCount;
+    private long _statsBytes;
+    private DateTime _lastStatsAt = DateTime.UtcNow;
 
     // Normalised RTP timestamp anchors (receiver side).
     // RTP timestamps start at a random offset; we subtract the first-seen
@@ -70,6 +72,9 @@ public class WebRtcService : IAsyncDisposable
 
     private static void Log(string msg) =>
         File.AppendAllText(LogPath, $"[WebRTC] {DateTime.Now:HH:mm:ss.fff} {msg}\n");
+
+    public readonly record struct NetworkStats(int UploadKbps, int PipelineDelayMs, int FramesSent);
+    public event Action<NetworkStats>? NetworkStatsUpdated;
 
     // ── ICE / RTC config ──────────────────────────────────────────────────────
 
@@ -404,13 +409,8 @@ public class WebRtcService : IAsyncDisposable
                 Log($"DLL init exception: {ex.GetType().Name}: {ex.Message}");
             }
 
-            // ── Adaptive controller ───────────────────────────────────────────
-            if (dllReady && _pc != null)
-            {
-                _adaptive = new AdaptiveController();
-                _adaptive.Attach(_pc);
-                _adaptive.ForceProfile((int)2); // HIGH = index 2
-            }
+            // O adaptativo antigo forçava perfis acima da meta escolhida pelo usuário.
+            // Mantemos a resolução/bitrate selecionados para evitar saltos e consumo excessivo.
 
             MfH264Encoder? gdiEncoder       = null;
             bool           gdiEncoderFailed = false;
@@ -525,6 +525,7 @@ public class WebRtcService : IAsyncDisposable
                                 {
                                     _pc?.SendVideo(rtpDuration, jf.Data);
                                     _framesSent++;
+                                    _statsBytes += jf.Data.Length;
 
                                     if (_framesSent <= 15 || _framesSent % 300 == 0)
                                     {
@@ -538,6 +539,8 @@ public class WebRtcService : IAsyncDisposable
                                 }
                             }
                         }
+
+                        PublishNetworkStats(t0);
 
                         if (SenderPreviewFrame != null && (++_previewCount % Math.Max(effectiveFps / 5, 1) == 0))
                         {
@@ -603,6 +606,19 @@ public class WebRtcService : IAsyncDisposable
     // =========================================================================
     // GDI helpers (fallback)
     // =========================================================================
+
+    private void PublishNetworkStats(DateTime frameStartedAt)
+    {
+        var now = DateTime.UtcNow;
+        var elapsed = (now - _lastStatsAt).TotalSeconds;
+        if (elapsed < 1.0) return;
+
+        var kbps = (int)Math.Round((_statsBytes * 8.0) / 1000.0 / Math.Max(elapsed, 0.001));
+        var delayMs = Math.Max(1, (int)Math.Round((now - frameStartedAt).TotalMilliseconds));
+        _statsBytes = 0;
+        _lastStatsAt = now;
+        NetworkStatsUpdated?.Invoke(new NetworkStats(kbps, delayMs, _framesSent));
+    }
 
     private static byte[] CaptureWindow(IntPtr hwnd, out int width, out int height)
     {

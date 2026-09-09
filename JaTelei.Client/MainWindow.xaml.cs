@@ -103,6 +103,7 @@ public partial class MainWindow : Window
                 try
                 {
                     await _signaling.ConnectAsync(_api.Token!);
+                    _signaling.OfferReceived -= OnOfferReceived;
                     _signaling.OfferReceived += OnOfferReceived;
 
                     // Buscar credenciais TURN temporárias do servidor (TTL 2h).
@@ -155,6 +156,7 @@ public partial class MainWindow : Window
             _currentFriendsVm = vm;
             vm.StartShareRequested += friend => Dispatcher.Invoke(() => ShowSharePicker(friend));
             vm.StopShareRequested  += OnStopShareRequested;
+            vm.LogoutRequested += OnLogoutRequested;
             _ = vm.LoadCommand.ExecuteAsync(null);
             MainContent.Content = new FriendsView { DataContext = vm };
         }
@@ -255,7 +257,9 @@ public partial class MainWindow : Window
         // Notify FriendsViewModel that sharing has started
         Dispatcher.Invoke(() => _currentFriendsVm?.OnSharingStarted(target));
 
-        // Wire self-preview: update FriendsView with a screenshot every ~3s
+        webRtc.NetworkStatsUpdated += stats =>
+            Dispatcher.Invoke(() => _currentFriendsVm?.OnNetworkStats(stats));
+
         webRtc.SenderPreviewFrame += preview =>
             Dispatcher.Invoke(() => _currentFriendsVm?.OnPreviewFrame(preview));
 
@@ -319,6 +323,20 @@ public partial class MainWindow : Window
         svc.StopCapture();
         _ = svc.DisposeAsync().AsTask();
         Dispatcher.Invoke(() => _currentFriendsVm?.OnSharingStopped());
+    }
+
+    private async void OnLogoutRequested()
+    {
+        StopCurrentSender();
+        _disposeActiveReceiver?.Invoke();
+        _disposeActiveReceiver = null;
+        _activeReceiverFromUserId = null;
+        _currentFriendsVm = null;
+        _signaling.OfferReceived -= OnOfferReceived;
+        await _signaling.DisconnectAsync();
+        _api.ClearAuth();
+        LoginViewModel.DeleteSavedCredentials();
+        Dispatcher.Invoke(ShowLogin);
     }
 
     // ── Receiver side ──────────────────────────────────────────────────────

@@ -28,6 +28,11 @@ public partial class LoginView : UserControl
                 if (!string.IsNullOrEmpty(vm.SavedPassword))
                     PwdBox.Password = vm.SavedPassword;
                 PwdPlaceholder.Visibility = string.IsNullOrEmpty(PwdBox.Password) ? Visibility.Visible : Visibility.Collapsed;
+
+                if (!string.IsNullOrEmpty(vm.SavedPassword) && vm.SubmitCommand.CanExecute(null))
+                {
+                    Dispatcher.BeginInvoke(new Action(() => vm.SubmitCommand.Execute(null)));
+                }
             }
         };
 
