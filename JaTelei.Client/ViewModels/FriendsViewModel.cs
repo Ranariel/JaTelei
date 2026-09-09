@@ -20,6 +20,7 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     [ObservableProperty] private bool _isPaused;
     [ObservableProperty] private bool _includeSystemAudio = true;
     [ObservableProperty] private BitmapSource? _selfPreviewImage;
+    [ObservableProperty] private string _activeSection = "share";
 
     public string SessionCode { get; } = $"JT-{Random.Shared.Next(1000, 9999)}";
     public string SessionLink => $"https://jatelei.com/sala/{SessionCode}";
@@ -34,14 +35,17 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
         : IsSharing
             ? $"{SelectedFriend.Username} esta vendo sua tela"
             : $"Enviar convite para {SelectedFriend.Username}";
-    public string PrimaryActionText => IsSharing ? "Compartilhando" : "Compartilhar";
+    public string ShareActionText => IsSharing ? "Trocar tela" : "Escolher e compartilhar";
     public string PauseActionText => IsPaused ? "Retomar" : "Pausar";
     public string PreviewHint => IsSharing
         ? "Sua tela esta sendo compartilhada com outro usuario pela internet."
-        : "Escolha um contato e inicie o compartilhamento.";
+        : "Escolha o destino e a tela que deseja transmitir.";
 
-    /// <summary>Inverse of IsSharing - used in XAML visibility bindings.</summary>
     public bool IsNotSharing => !IsSharing;
+    public bool IsShareSection => ActiveSection == "share";
+    public bool IsSessionSection => ActiveSection == "session";
+    public bool IsDevicesSection => ActiveSection == "devices";
+    public bool IsSettingsSection => ActiveSection == "settings";
 
     partial void OnIsSharingChanged(bool value)
     {
@@ -50,7 +54,7 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
         OnPropertyChanged(nameof(ViewerCountText));
         OnPropertyChanged(nameof(ViewerStatus));
         OnPropertyChanged(nameof(ViewerDetail));
-        OnPropertyChanged(nameof(PrimaryActionText));
+        OnPropertyChanged(nameof(ShareActionText));
         OnPropertyChanged(nameof(PreviewHint));
         OnPropertyChanged(nameof(LatencyLabel));
         OnPropertyChanged(nameof(UploadLabel));
@@ -65,6 +69,14 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     partial void OnSelectedFriendChanged(Friend? value)
     {
         OnPropertyChanged(nameof(ViewerDetail));
+    }
+
+    partial void OnActiveSectionChanged(string value)
+    {
+        OnPropertyChanged(nameof(IsShareSection));
+        OnPropertyChanged(nameof(IsSessionSection));
+        OnPropertyChanged(nameof(IsDevicesSection));
+        OnPropertyChanged(nameof(IsSettingsSection));
     }
 
     public event Action<Friend>? StartShareRequested;
@@ -99,7 +111,11 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     [RelayCommand]
     private void ShareScreen()
     {
-        if (SelectedFriend is null) return;
+        if (SelectedFriend is null)
+        {
+            StatusMessage = "Selecione um contato antes de compartilhar.";
+            return;
+        }
         StartShareRequested?.Invoke(SelectedFriend);
     }
 
@@ -126,6 +142,11 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
             StatusMessage = SessionLink;
         }
     }
+
+    [RelayCommand] private void ShowShare() => ActiveSection = "share";
+    [RelayCommand] private void ShowSession() => ActiveSection = "session";
+    [RelayCommand] private void ShowDevices() => ActiveSection = "devices";
+    [RelayCommand] private void ShowSettings() => ActiveSection = "settings";
 
     public void OnSharingStarted()
     {
