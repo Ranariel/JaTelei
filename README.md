@@ -48,12 +48,3 @@ O endpoint de atualização automática fica em:
 ```
 https://jaclipei.com/screenshare/api/update/latest
 ```
-
-## Segredos necessários (GitHub Secrets)
-
-| Secret | Uso |
-|---|---|
-| `TURN_USERNAME` | Credencial do servidor TURN |
-| `TURN_CREDENTIAL` | Credencial do servidor TURN |
-| `VPS_HOST` | IP/hostname do servidor de deploy |
-| `VPS_SSH_KEY` | Chave SSH privada para acesso ao VPS |
