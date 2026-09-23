@@ -17,18 +17,12 @@ namespace JaTelei.Client.Services;
 //
 //  SENDER PIPELINE (GPU zero-copy, C++ DLL + Opus):
 //    WGC / DXGI DDup → D3D11VP (BGRA→NV12) → NVENC/AMF/QSV → H.264/AV1
-//      → JitterBuffer → RTP SendVideo()
+//      → RTP SendVideo()   (no JitterBuffer on sender — reduces latency)
 //    NAudio WasapiLoopback → AudioEngine (Concentus Opus) → RTP SendAudio()
 //
 //  RECEIVER PIPELINE:
 //    RTP H.264 → JitterBuffer → MfH264Decoder → FrameReceived (BGRA)
 //    RTP Opus  → AudioEngine (Concentus decode) → WaveOutPlayer (48kHz stereo)
-//
-//  AV SYNC:
-//    AVSyncManager expects PTS in 100-ns ticks (10 000 ticks = 1 ms).
-//    Both video and audio PTS are normalised to start at 0 (first-seen
-//    RTP timestamp subtracted) to avoid the large random initial offset
-//    that RTP timestamps carry.
 //
 //  PUBLIC INTERFACE: IDENTICAL TO v1 — no callers need to change.
 // =============================================================================
@@ -47,10 +41,9 @@ public class WebRtcService : IAsyncDisposable
 
     // ── Media Engine components ───────────────────────────────────────────────
 
-    private AudioEngine?         _audioEngine;
-    private AdaptiveController?  _adaptive;
-    private readonly AVSyncManager    _avSync      = new();
-    private readonly JitterBuffer     _jitterBuf   = new();
+    private AudioEngine?            _audioEngine;
+    private readonly AVSyncManager  _avSync    = new();
+    private readonly JitterBuffer   _jitterBuf = new();   // receiver only
 
     // ── Diagnostics & state flags ─────────────────────────────────────────────
 
@@ -58,6 +51,7 @@ public class WebRtcService : IAsyncDisposable
     private int  _framesSent;
     private volatile bool _forceGdiKeyframe;
     private volatile bool _requestDllReinit;  // triggers DLL Shutdown+Init → forces IDR
+    private volatile bool _isPaused;           // sender capture loop skips frames while true
     private int  _previewCount;
     private long _statsBytes;
     private DateTime _lastStatsAt = DateTime.UtcNow;
@@ -68,32 +62,30 @@ public class WebRtcService : IAsyncDisposable
     private DateTime _lastBitrateAdjustAt = DateTime.MinValue;
     private int _previewUiPending;
 
-    // Normalised RTP timestamp anchors (receiver side).
-    // RTP timestamps start at a random offset; we subtract the first-seen
-    // value so both audio and video PTS begin at 0 and AVSyncManager sees
-    // real relative drift rather than a huge constant offset.
-
     internal static readonly string LogPath =
         Path.Combine(Path.GetTempPath(), "jatelei_error.txt");
 
-    private static void Log(string msg) =>
-        File.AppendAllText(LogPath, $"[WebRTC] {DateTime.Now:HH:mm:ss.fff} {msg}\n");
+    private static void Log(string msg)
+    {
+        try
+        {
+            var fi = new FileInfo(LogPath);
+            if (fi.Exists && fi.Length > 5 * 1024 * 1024)
+                File.WriteAllText(LogPath, $"[Log rotated {DateTime.Now:yyyy-MM-dd HH:mm:ss}]\n");
+            File.AppendAllText(LogPath, $"[WebRTC] {DateTime.Now:HH:mm:ss.fff} {msg}\n");
+        }
+        catch { }
+    }
 
     public readonly record struct NetworkStats(int UploadKbps, int PipelineDelayMs, int FramesSent, int LossPermille, int RttMs, int EncoderBitrateKbps);
     public event Action<NetworkStats>? NetworkStatsUpdated;
 
     // ── ICE / RTC config ──────────────────────────────────────────────────────
 
-    // Credenciais TURN dinâmicas (obtidas do servidor via ApiService.GetIceCredentialsAsync).
-    // Nulas enquanto não carregadas — fallback para appsettings.local.json.
     private static string? _dynTurnUrl;
     private static string? _dynTurnUser;
     private static string? _dynTurnCred;
 
-    /// <summary>
-    /// Atualiza as credenciais TURN dinâmicas para a próxima sessão RTCPeerConnection.
-    /// Chamado por MainWindow logo após o login, e renovado antes de cada restart de ICE.
-    /// </summary>
     public static void SetDynamicTurnCredentials(string turnUrl, string username, string credential)
     {
         _dynTurnUrl  = turnUrl;
@@ -111,8 +103,6 @@ public class WebRtcService : IAsyncDisposable
             new() { urls = "stun:stun1.l.google.com:19302" },
         };
 
-        // Preferir credenciais dinâmicas (geradas pelo servidor com TTL).
-        // Fallback para appsettings.local.json (para builds locais / dev).
         var turnUrl  = _dynTurnUrl  ?? cfg["Ice:TurnUrl"];
         var turnUser = _dynTurnUser ?? cfg["Ice:TurnUsername"];
         var turnCred = _dynTurnCred ?? cfg["Ice:TurnCredential"];
@@ -126,7 +116,6 @@ public class WebRtcService : IAsyncDisposable
         return new RTCConfiguration { iceServers = servers };
     }
 
-    // RtcConfig é recriado a cada chamada para sempre pegar as credenciais atuais.
     private static RTCConfiguration RtcConfig => BuildRtcConfig();
 
     // ── Public events & properties ────────────────────────────────────────────
@@ -147,6 +136,16 @@ public class WebRtcService : IAsyncDisposable
     [StructLayout(LayoutKind.Sequential)]
     private struct RECT { public int Left, Top, Right, Bottom; }
     private const uint PW_RENDERFULLCONTENT = 0x00000002;
+
+    // =========================================================================
+    // Pause / Volume controls
+    // =========================================================================
+
+    /// <summary>Pause or resume the sender capture loop without tearing down ICE.</summary>
+    public void SetPaused(bool paused) => _isPaused = paused;
+
+    /// <summary>Set the receiver audio playback volume (0.0 = mute, 1.0 = full).</summary>
+    public void SetVolume(float volume) => _audioEngine?.SetVolume(volume);
 
     // =========================================================================
     // SENDER — CreateOffer + StartCapture
@@ -210,7 +209,6 @@ public class WebRtcService : IAsyncDisposable
         _pc.OnRtpPacketReceived += (ep, mediaType, rtpPacket) =>
         {
             if (mediaType != SDPMediaTypesEnum.audio) return;
-
             _audioEngine.OnOpusReceived(rtpPacket.Payload);
         };
 
@@ -218,7 +216,6 @@ public class WebRtcService : IAsyncDisposable
             new List<AudioFormat> { new AudioFormat(AudioCodecsEnum.OPUS, 111, 48000, 2) },
             MediaStreamStatusEnum.RecvOnly);
         _pc.addTrack(audioTrack);
-
 
         WireIceEvents("Recv");
         WireOnConnected(isSender: false);
@@ -247,7 +244,6 @@ public class WebRtcService : IAsyncDisposable
             long   pts    = (long)ts * 10_000_000L / 90_000L;
             ushort seq    = (ushort)(_framesRecv & 0xFFFF);
 
-            // Diagnostic logging for first 10 + every 300 frames
             if (_framesRecv <= 10 || _framesRecv % 300 == 0)
             {
                 var nalTypes = DetectNalTypes(h264);
@@ -391,7 +387,8 @@ public class WebRtcService : IAsyncDisposable
             IntPtr hwnd = target?.WindowHandle ?? IntPtr.Zero;
             int    dstH = targetHeight > 0 ? targetHeight : 0;
 
-            // Audio engine created unconditionally (NAudio doesn't need DLL)
+            // Audio engine created unconditionally (NAudio doesn't need DLL).
+            // DLL audio disabled — NAudio loopback handles system audio independently.
             {
                 const uint opusRtpDuration = 960;
                 Action<byte[]> sendOpus = payload =>
@@ -414,7 +411,7 @@ public class WebRtcService : IAsyncDisposable
                     captureMode:   JcCaptureMode.Auto,
                     codec:         JcCodec.H264,
                     encoderVendor: JcEncoderVendor.Auto,
-                    enableAudio:   true);
+                    enableAudio:   false);   // NAudio handles audio; DLL audio unnecessary
 
                 Log(dllReady
                     ? $"DLL OK ({ScreenCaptureService.OutputWidth}x{ScreenCaptureService.OutputHeight})"
@@ -425,20 +422,22 @@ public class WebRtcService : IAsyncDisposable
                 Log($"DLL init exception: {ex.GetType().Name}: {ex.Message}");
             }
 
-            // O adaptativo antigo forçava perfis acima da meta escolhida pelo usuário.
-            // Mantemos a resolução/bitrate selecionados para evitar saltos e consumo excessivo.
-
             MfH264Encoder? gdiEncoder       = null;
-            MfH264Decoder? senderPreviewDecoder = null;
             bool           gdiEncoderFailed = false;
             int            encW = 0, encH = 0;
-            ushort         txSeq = 0;
             _framesSent = 0;
 
             try
             {
                 while (!token.IsCancellationRequested)
                 {
+                    // ── Pause support ─────────────────────────────────────────
+                    if (_isPaused)
+                    {
+                        await Task.Delay(100, token).ConfigureAwait(false);
+                        continue;
+                    }
+
                     var t0 = DateTime.UtcNow;
                     try
                     {
@@ -458,7 +457,7 @@ public class WebRtcService : IAsyncDisposable
                                 captureMode:   JcCaptureMode.Auto,
                                 codec:         JcCodec.H264,
                                 encoderVendor: JcEncoderVendor.Auto,
-                                enableAudio:   true);
+                                enableAudio:   false);
                             Log(dllReady ? "DLL reinit OK — IDR frame incoming" : "DLL reinit FAILED — using GDI");
                         }
 
@@ -531,82 +530,62 @@ public class WebRtcService : IAsyncDisposable
                             }
                         }
 
+                        // Send directly — no JitterBuffer on sender path (reduces latency)
                         if (h264?.Length > 0)
                         {
                             long pts = (long)(DateTime.UtcNow.Ticks - 621355968000000000L) * 100L;
-                            _jitterBuf.Push(txSeq++, h264, isKey, pts);
                             _avSync.ReportVideo(pts);
 
-                            while (_jitterBuf.TryPop(out var jf) && jf != null)
+                            try
                             {
-                                try
-                                {
-                                    _pc?.SendVideo(rtpDuration, jf.Data);
-                                    _framesSent++;
-                                    _statsBytes += jf.Data.Length;
-                                    AdjustBitrateFromRtcp();
+                                _pc?.SendVideo(rtpDuration, h264);
+                                _framesSent++;
+                                _statsBytes += h264.Length;
+                                AdjustBitrateFromRtcp();
 
-                                    if (_framesSent <= 15 || _framesSent % 300 == 0)
-                                    {
-                                        var nalTypes = DetectNalTypes(jf.Data);
-                                        Log($"Sent frame#{_framesSent} {jf.Data.Length}B NALs=[{nalTypes}] key={isKey}");
-                                    }
-                                }
-                                catch (Exception ex)
+                                if (_framesSent <= 15 || _framesSent % 300 == 0)
                                 {
-                                    Log($"SendVideo: {ex.GetType().Name}: {ex.Message}");
+                                    var nalTypes = DetectNalTypes(h264);
+                                    Log($"Sent frame#{_framesSent} {h264.Length}B NALs=[{nalTypes}] key={isKey}");
                                 }
+                            }
+                            catch (Exception ex)
+                            {
+                                Log($"SendVideo: {ex.GetType().Name}: {ex.Message}");
                             }
                         }
 
                         PublishNetworkStats(t0);
 
-                        if (SenderPreviewFrame != null && (++_previewCount % Math.Max(effectiveFps / 30, 1) == 0) &&
+                        // ── Sender preview ─────────────────────────────────────
+                        if (SenderPreviewFrame != null &&
+                            (++_previewCount % Math.Max(effectiveFps / 30, 1) == 0) &&
                             System.Threading.Interlocked.Exchange(ref _previewUiPending, 1) == 0)
                         {
                             try
                             {
                                 byte[]? previewRaw = null;
-                                int pw = 0;
-                                int ph = 0;
+                                int pw = 0, ph = 0;
 
-                                if (h264?.Length > 0)
-                                {
-                                    try
-                                    {
-                                        senderPreviewDecoder ??= new MfH264Decoder();
-                                        var decoded = senderPreviewDecoder.Decode(h264);
-                                        if (decoded.bgra != null && decoded.width > 0 && decoded.height > 0)
-                                        {
-                                            previewRaw = decoded.bgra;
-                                            pw = decoded.width;
-                                            ph = decoded.height;
-                                        }
-                                    }
-                                    catch
-                                    {
-                                        senderPreviewDecoder?.Dispose();
-                                        senderPreviewDecoder = null;
-                                    }
-                                }
-
-                                if (previewRaw == null && dllReady && ScreenCaptureService.GetPreviewFrame() is { } previewFrame)
+                                // DLL path: use GPU preview frame (zero extra encode/decode cost)
+                                if (dllReady && ScreenCaptureService.GetPreviewFrame() is { } previewFrame)
                                 {
                                     previewRaw = previewFrame.Bgra;
                                     pw = previewFrame.Width;
                                     ph = previewFrame.Height;
                                 }
-                                else if (previewRaw == null && target?.WindowHandle is { } previewHwnd && previewHwnd != IntPtr.Zero)
+                                // GDI fallback: capture again for preview
+                                else if (target?.WindowHandle is { } previewHwnd && previewHwnd != IntPtr.Zero)
                                 {
                                     previewRaw = CaptureWindow(previewHwnd, out pw, out ph);
                                 }
-                                else if (previewRaw == null && target?.MonitorBounds is System.Windows.Rect previewBounds)
+                                else if (target?.MonitorBounds is System.Windows.Rect previewBounds)
                                 {
                                     previewRaw = CaptureRegion(
                                         (int)previewBounds.X, (int)previewBounds.Y,
                                         (int)previewBounds.Width, (int)previewBounds.Height, out pw, out ph);
                                 }
-                                else if (previewRaw == null)
+                                else
                                 {
                                     int scrW = (int)System.Windows.SystemParameters.PrimaryScreenWidth;
                                     int scrH = (int)System.Windows.SystemParameters.PrimaryScreenHeight;
@@ -634,6 +613,10 @@ public class WebRtcService : IAsyncDisposable
                                         System.Threading.Interlocked.Exchange(ref _previewUiPending, 0);
                                     }
                                 }
+                                else
+                                {
+                                    System.Threading.Interlocked.Exchange(ref _previewUiPending, 0);
+                                }
                             }
                             catch
                             {
@@ -654,9 +637,7 @@ public class WebRtcService : IAsyncDisposable
             finally
             {
                 gdiEncoder?.Dispose();
-                senderPreviewDecoder?.Dispose();
                 if (_audioEngine != null) { await _audioEngine.DisposeAsync(); _audioEngine = null; }
-                _adaptive?.Dispose(); _adaptive = null;
                 if (dllReady) ScreenCaptureService.Shutdown();
             }
         }, token);
@@ -669,7 +650,7 @@ public class WebRtcService : IAsyncDisposable
     }
 
     // =========================================================================
-    // GDI helpers (fallback)
+    // RTCP / Stats
     // =========================================================================
 
     private void WireSenderReports()
@@ -754,6 +735,10 @@ public class WebRtcService : IAsyncDisposable
         NetworkStatsUpdated?.Invoke(new NetworkStats(kbps, delayMs, _framesSent, _rtcpLossPermille, _rtcpRttMs, _currentBitrateKbps));
     }
 
+    // =========================================================================
+    // GDI helpers (fallback)
+    // =========================================================================
+
     private static byte[] CaptureWindow(IntPtr hwnd, out int width, out int height)
     {
         GetWindowRect(hwnd, out var rect);
@@ -780,26 +765,51 @@ public class WebRtcService : IAsyncDisposable
         return BitmapToBgra(bmp, w, h);
     }
 
+    // Bilinear downscale — smoother preview than nearest-neighbor.
     private static byte[] DownscaleBgra(byte[] source, int width, int height, int maxWidth, out int outWidth, out int outHeight)
     {
         if (width <= maxWidth)
         {
-            outWidth = width;
+            outWidth  = width;
             outHeight = height;
             return source;
         }
 
-        outWidth = maxWidth;
+        outWidth  = maxWidth;
         outHeight = Math.Max(1, (int)Math.Round(height * (maxWidth / (double)width)));
         var scaled = new byte[outWidth * outHeight * 4];
 
+        double scaleX = width  / (double)outWidth;
+        double scaleY = height / (double)outHeight;
+
         for (int y = 0; y < outHeight; y++)
         {
-            int srcY = Math.Min(height - 1, (int)(y * (height / (double)outHeight)));
+            double srcYf = (y + 0.5) * scaleY - 0.5;
+            int    srcY0 = Math.Clamp((int)srcYf,     0, height - 1);
+            int    srcY1 = Math.Clamp(srcY0 + 1,      0, height - 1);
+            float  ty    = (float)(srcYf - Math.Floor(srcYf));
+
             for (int x = 0; x < outWidth; x++)
             {
-                int srcX = Math.Min(width - 1, (int)(x * (width / (double)outWidth)));
-                Buffer.BlockCopy(source, ((srcY * width) + srcX) * 4, scaled, ((y * outWidth) + x) * 4, 4);
+                double srcXf = (x + 0.5) * scaleX - 0.5;
+                int    srcX0 = Math.Clamp((int)srcXf, 0, width - 1);
+                int    srcX1 = Math.Clamp(srcX0 + 1,  0, width - 1);
+                float  tx    = (float)(srcXf - Math.Floor(srcXf));
+
+                int o00 = (srcY0 * width + srcX0) * 4;
+                int o10 = (srcY0 * width + srcX1) * 4;
+                int o01 = (srcY1 * width + srcX0) * 4;
+                int o11 = (srcY1 * width + srcX1) * 4;
+
+                int dst = (y * outWidth + x) * 4;
+                for (int c = 0; c < 4; c++)
+                {
+                    float v = source[o00 + c] * (1 - tx) * (1 - ty)
+                            + source[o10 + c] * tx        * (1 - ty)
+                            + source[o01 + c] * (1 - tx)  * ty
+                            + source[o11 + c] * tx        * ty;
+                    scaled[dst + c] = (byte)Math.Clamp((int)(v + 0.5f), 0, 255);
+                }
             }
         }
 
@@ -880,8 +890,6 @@ public class WebRtcService : IAsyncDisposable
             _audioEngine = null;
         }
 
-        _adaptive?.Dispose();
-        _adaptive = null;
         _avSync.Reset();
         _jitterBuf.Flush();
 

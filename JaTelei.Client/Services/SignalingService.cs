@@ -15,8 +15,13 @@ public class SignalingService
 
     public async Task ConnectAsync(string token)
     {
+        // Use AccessTokenProvider instead of embedding the token in the URL
+        // to avoid the token appearing in server logs and to support future refresh.
         _hub = new HubConnectionBuilder()
-            .WithUrl($"{HubUrl}?access_token={token}")
+            .WithUrl(HubUrl, options =>
+            {
+                options.AccessTokenProvider = () => Task.FromResult<string?>(token);
+            })
             .WithAutomaticReconnect()
             .Build();
 

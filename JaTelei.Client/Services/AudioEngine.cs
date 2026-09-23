@@ -284,8 +284,6 @@ public sealed class AudioEngine : IAsyncDisposable
     // RECEIVER — decode incoming Opus RTP payload → waveOut
     // =========================================================================
 
-    private readonly short[] _decodeBuf = new short[OpusFrameSamples * OpusChannels * 4];
-
     /// <summary>
     /// Call this from SIPSorcery's OnRtpPacketReceived event.
     /// Decodes the Opus payload and queues it to the waveOut player.
@@ -296,12 +294,14 @@ public sealed class AudioEngine : IAsyncDisposable
 
         try
         {
-            int frames = _decoder.Decode(payload.AsSpan(), _decodeBuf.AsSpan(), OpusFrameSamples, false);
+            // Decode buffer allocated as a local to avoid race conditions on concurrent calls.
+            short[] decodeBuf = new short[OpusFrameSamples * OpusChannels * 4];
+            int frames = _decoder.Decode(payload.AsSpan(), decodeBuf.AsSpan(), OpusFrameSamples, false);
             if (frames > 0)
             {
                 int samples = frames * OpusChannels;
                 var pcm16   = new byte[samples * 2];
-                Buffer.BlockCopy(_decodeBuf, 0, pcm16, 0, pcm16.Length);
+                Buffer.BlockCopy(decodeBuf, 0, pcm16, 0, pcm16.Length);
                 _player.QueueAudio(pcm16);
             }
         }
@@ -309,6 +309,16 @@ public sealed class AudioEngine : IAsyncDisposable
         {
             Log($"ERROR in OnOpusReceived: {ex.GetType().Name}: {ex.Message}");
         }
+    }
+
+    // =========================================================================
+    // Volume (receiver side)
+    // =========================================================================
+
+    /// <summary>Sets the per-stream playback volume (0.0 = mute, 1.0 = full).</summary>
+    public void SetVolume(float volume)
+    {
+        if (_player != null) _player.Volume = Math.Clamp(volume, 0f, 2f);
     }
 
     // =========================================================================
