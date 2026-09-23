@@ -49,7 +49,7 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     public string PreviewHint => IsSharing
         ? string.IsNullOrEmpty(SharingTargetName)
             ? "Sua tela esta sendo compartilhada com outro usuario pela internet."
-            : $"Compartilhando "{SharingTargetName}" pela internet."
+            : $"Compartilhando \"{SharingTargetName}\" pela internet."
         : "Escolha o destino e a tela que deseja transmitir.";
 
     public bool IsNotSharing => !IsSharing;
