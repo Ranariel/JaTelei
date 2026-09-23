@@ -366,7 +366,7 @@ public class WebRtcService : IAsyncDisposable
 
         int effectiveFps = target?.Fps > 0 ? target.Fps : fps;
         int targetHeight = target?.ResolutionHeight ?? 0;
-        int bitrateKbps  = FriendsViewModel.GetRecommendedBitrateKbps(targetHeight);
+        int bitrateKbps  = FriendsViewModel.GetRecommendedBitrateKbps(targetHeight, effectiveFps);
         _targetBitrateKbps = bitrateKbps;
         _currentBitrateKbps = bitrateKbps;
         _rtcpLossPermille = 0;
@@ -678,11 +678,14 @@ public class WebRtcService : IAsyncDisposable
     {
         if (_targetBitrateKbps <= 0 || (DateTime.UtcNow - _lastBitrateAdjustAt).TotalSeconds < 3) return;
 
+        // Floor: never drop below 50% of the user-selected target bitrate
+        int floorKbps = Math.Max(500, _targetBitrateKbps / 2);
+
         var next = _currentBitrateKbps;
         if (_rtcpLossPermille >= 30 || _rtcpRttMs >= 220)
-            next = Math.Max(1000, (int)Math.Round(_currentBitrateKbps * 0.85));
+            next = Math.Max(floorKbps, (int)Math.Round(_currentBitrateKbps * 0.90));
         else if (_rtcpLossPermille <= 5 && (_rtcpRttMs == 0 || _rtcpRttMs <= 140) && _currentBitrateKbps < _targetBitrateKbps)
-            next = Math.Min(_targetBitrateKbps, _currentBitrateKbps + 500);
+            next = Math.Min(_targetBitrateKbps, _currentBitrateKbps + 1_000);
 
         if (next == _currentBitrateKbps) return;
 

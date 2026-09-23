@@ -33,9 +33,9 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     public string FrameRateLabel => $"{SelectedFps} fps";
     public string LatencyLabel => IsSharing ? (CurrentLatencyMs > 0 ? $"Atraso {CurrentLatencyMs} ms" : "Medindo") : "Aguardando";
     public string UploadLabel => IsSharing ? $"Atual {CurrentUploadKbps} kbps" : "Atual 0 kbps";
-    public string TargetBitrateLabel => $"{GetRecommendedBitrateKbps(SelectedResolutionHeight)} kbps";
+    public string TargetBitrateLabel => $"{GetRecommendedBitrateKbps(SelectedResolutionHeight, SelectedFps)} kbps";
     public string PacketLossLabel => IsSharing ? $"Perda {PacketLossPermille / 10.0:F1}%" : "Perda 0.0%";
-    public string EncoderBitrateLabel => IsSharing && EncoderBitrateKbps > 0 ? $"Encoder {EncoderBitrateKbps} kbps" : $"Encoder {GetRecommendedBitrateKbps(SelectedResolutionHeight)} kbps";
+    public string EncoderBitrateLabel => IsSharing && EncoderBitrateKbps > 0 ? $"Encoder {EncoderBitrateKbps} kbps" : $"Encoder {GetRecommendedBitrateKbps(SelectedResolutionHeight, SelectedFps)} kbps";
     public string SharingStatus => IsSharing ? (IsPaused ? "Pausado" : "Compartilhando tela") : "Pronto para compartilhar";
     public string ViewerCountText => IsViewerConnected ? "1 conectado" : "0 conectado";
     public string ViewerStatus => IsViewerConnected ? "Visualizador conectado" : "Nenhum visualizador";
@@ -111,6 +111,8 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     partial void OnSelectedFpsChanged(int value)
     {
         OnPropertyChanged(nameof(FrameRateLabel));
+        OnPropertyChanged(nameof(TargetBitrateLabel));
+        OnPropertyChanged(nameof(EncoderBitrateLabel));
     }
 
     partial void OnCurrentUploadKbpsChanged(int value)
@@ -203,7 +205,7 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
         CurrentUploadKbps = 0;
         CurrentLatencyMs = 0;
         PacketLossPermille = 0;
-        EncoderBitrateKbps = GetRecommendedBitrateKbps(target.ResolutionHeight);
+        EncoderBitrateKbps = GetRecommendedBitrateKbps(target.ResolutionHeight, target.Fps);
         IsPaused = false;
         IsViewerConnected = false;
         SharingTargetName = target.DisplayName ?? string.Empty;
@@ -245,15 +247,20 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
         _ => $"{height}p"
     };
 
-    public static int GetRecommendedBitrateKbps(int height) => height switch
+    // Bitrate targets for H.264 screen-sharing (CBR ceiling passed to encoder).
+    // 60fps variants are ~50% higher than 30fps because twice the frames need encoding.
+    public static int GetRecommendedBitrateKbps(int height, int fps = 30)
     {
-        0 => 6000,
-        >= 1080 => 6000,
-        720 => 5000,
-        480 => 3500,
-        360 => 2500,
-        240 => 2000,
-        160 => 1500,
-        _ => 2000
-    };
+        bool hi = fps >= 60;
+        return height switch
+        {
+            <= 0    => hi ? 12_000 : 8_000,   // Native
+            >= 1080 => hi ? 12_000 : 8_000,   // 1080p
+            >= 720  => hi ?  8_000 : 5_000,   // 720p
+            >= 480  => hi ?  4_000 : 2_500,   // 480p
+            >= 360  => hi ?  2_500 : 1_500,   // 360p
+            >= 240  => hi ?  1_200 :   800,   // 240p
+            _       => hi ?    800 :   500,   // 160p
+        };
+    }
 }
