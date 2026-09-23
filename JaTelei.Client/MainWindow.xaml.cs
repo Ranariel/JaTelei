@@ -19,6 +19,7 @@ public partial class MainWindow : Window
     // Track the active sender so we can stop it and show self-preview
     private WebRtcService?  _currentSenderService;
     private FriendsViewModel? _currentFriendsVm;
+    private Action<bool>? _pauseChangedHandler;
 
     // Auto-restart: remember the current send target for ICE reconnects
     private Friend?      _currentSendFriend;
@@ -48,13 +49,13 @@ public partial class MainWindow : Window
         if (WindowState == WindowState.Maximized)
         {
                 RootBorder.BorderThickness = new Thickness(0);
-            BtnMaxRestore.Content  = "\uE923";
+            BtnMaxRestore.Content  = "";
             BtnMaxRestore.ToolTip  = "Restaurar";
         }
         else
         {
             RootBorder.BorderThickness = new Thickness(1);
-            BtnMaxRestore.Content  = "\uE922";
+            BtnMaxRestore.Content  = "";
             BtnMaxRestore.ToolTip  = "Maximizar";
         }
     }
@@ -161,6 +162,11 @@ public partial class MainWindow : Window
         {
             var vm = new FriendsViewModel(_api, _signaling);
             _currentFriendsVm = vm;
+
+            // Wire pause toggle → WebRtcService.SetPaused
+            _pauseChangedHandler = isPaused => _currentSenderService?.SetPaused(isPaused);
+            vm.PauseChanged += _pauseChangedHandler;
+
             vm.StartShareRequested += friend => Dispatcher.Invoke(() => ShowSharePicker(friend));
             vm.StopShareRequested  += OnStopShareRequested;
             vm.LogoutRequested += OnLogoutRequested;
@@ -272,6 +278,10 @@ public partial class MainWindow : Window
 
         webRtc.IceStateChanged += state =>
         {
+            // Update viewer-connected indicator based on real ICE state
+            bool connected = state is "connected" or "completed";
+            Dispatcher.Invoke(() => _currentFriendsVm?.SetViewerConnected(connected));
+
             if (state == "closed" || state == "failed")
             {
                 webRtc.IceCandidateReady       -= iceCandidateReadyHandler;
@@ -324,6 +334,13 @@ public partial class MainWindow : Window
 
     private void StopCurrentSender()
     {
+        // Unwire pause handler from previous vm before replacing
+        if (_currentFriendsVm != null && _pauseChangedHandler != null)
+        {
+            _currentFriendsVm.PauseChanged -= _pauseChangedHandler;
+            _pauseChangedHandler = null;
+        }
+
         var svc = _currentSenderService;
         if (svc == null) return;
         _currentSenderService = null;

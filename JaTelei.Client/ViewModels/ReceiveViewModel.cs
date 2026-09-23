@@ -1,5 +1,4 @@
 using System.IO;
-using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
@@ -41,37 +40,11 @@ public partial class ReceiveViewModel : ObservableObject, IAsyncDisposable
             OnPropertyChanged();
             OnPropertyChanged(nameof(MuteIcon));
             if (!_isMuted)
-                SetSystemVolume(value);
+                _webRtc.SetVolume(value / 100f);
         }
     }
 
     public string MuteIcon => _isMuted || _volume == 0 ? "🔇" : "🔊";
-
-    // ── WinMM P/Invoke (volume mestre de saída de áudio) ─────────────────
-
-    [DllImport("winmm.dll")] private static extern int waveOutSetVolume(IntPtr hwo, uint dwVolume);
-    [DllImport("winmm.dll")] private static extern int waveOutGetVolume(IntPtr hwo, out uint dwVolume);
-
-    private static void SetSystemVolume(int pct)
-    {
-        try
-        {
-            uint v = (uint)Math.Clamp(pct, 0, 100) * 65535 / 100;
-            uint dword = (v & 0xFFFF) | ((v & 0xFFFF) << 16);
-            waveOutSetVolume(IntPtr.Zero, dword);
-        }
-        catch { /* melhor esforço */ }
-    }
-
-    private static int GetSystemVolume()
-    {
-        try
-        {
-            waveOutGetVolume(IntPtr.Zero, out uint dword);
-            return (int)((dword & 0xFFFF) * 100ul / 65535);
-        }
-        catch { return 100; }
-    }
 
     // ─────────────────────────────────────────────────────────────────────
 
@@ -89,9 +62,6 @@ public partial class ReceiveViewModel : ObservableObject, IAsyncDisposable
         _iceCandidateReadyHandler = async c =>
             await _signaling.SendIceCandidateAsync(_fromUserId, c);
         _webRtc.IceCandidateReady += _iceCandidateReadyHandler;
-
-        // Lê o volume atual do sistema para iniciar o slider no valor real
-        _volume = GetSystemVolume();
     }
 
     // ── ICE state ─────────────────────────────────────────────────────────
@@ -173,11 +143,11 @@ public partial class ReceiveViewModel : ObservableObject, IAsyncDisposable
         if (_isMuted)
         {
             _volumeBeforeMute = _volume;
-            SetSystemVolume(0);
+            _webRtc.SetVolume(0f);
         }
         else
         {
-            SetSystemVolume(_volumeBeforeMute);
+            _webRtc.SetVolume(_volumeBeforeMute / 100f);
         }
         OnPropertyChanged(nameof(MuteIcon));
     }

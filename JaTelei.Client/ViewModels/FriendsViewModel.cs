@@ -1,5 +1,4 @@
 using System.Collections.ObjectModel;
-using System.Windows;
 using System.Windows.Media.Imaging;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -27,9 +26,9 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     [ObservableProperty] private int _currentLatencyMs;
     [ObservableProperty] private int _packetLossPermille;
     [ObservableProperty] private int _encoderBitrateKbps;
+    [ObservableProperty] private bool _isViewerConnected;
+    [ObservableProperty] private string _sharingTargetName = string.Empty;
 
-    public string SessionCode { get; } = $"JT-{Random.Shared.Next(1000, 9999)}";
-    public string SessionLink => $"https://jatelei.com/sala/{SessionCode}";
     public string QualityLabel => FormatResolution(SelectedResolutionHeight);
     public string FrameRateLabel => $"{SelectedFps} fps";
     public string LatencyLabel => IsSharing ? (CurrentLatencyMs > 0 ? $"Atraso {CurrentLatencyMs} ms" : "Medindo") : "Aguardando";
@@ -38,22 +37,23 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     public string PacketLossLabel => IsSharing ? $"Perda {PacketLossPermille / 10.0:F1}%" : "Perda 0.0%";
     public string EncoderBitrateLabel => IsSharing && EncoderBitrateKbps > 0 ? $"Encoder {EncoderBitrateKbps} kbps" : $"Encoder {GetRecommendedBitrateKbps(SelectedResolutionHeight)} kbps";
     public string SharingStatus => IsSharing ? (IsPaused ? "Pausado" : "Compartilhando tela") : "Pronto para compartilhar";
-    public string ViewerCountText => IsSharing ? "1 conectado" : "0 conectado";
-    public string ViewerStatus => IsSharing ? "Visualizador conectado" : "Nenhum visualizador";
+    public string ViewerCountText => IsViewerConnected ? "1 conectado" : "0 conectado";
+    public string ViewerStatus => IsViewerConnected ? "Visualizador conectado" : "Nenhum visualizador";
     public string ViewerDetail => SelectedFriend is null
         ? "Escolha um contato para iniciar"
-        : IsSharing
+        : IsViewerConnected
             ? $"{SelectedFriend.Username} esta vendo sua tela"
             : $"Enviar convite para {SelectedFriend.Username}";
     public string ShareActionText => IsSharing ? "Trocar tela" : "Escolher e compartilhar";
     public string PauseActionText => IsPaused ? "Retomar" : "Pausar";
     public string PreviewHint => IsSharing
-        ? "Sua tela esta sendo compartilhada com outro usuario pela internet."
+        ? string.IsNullOrEmpty(SharingTargetName)
+            ? "Sua tela esta sendo compartilhada com outro usuario pela internet."
+            : $"Compartilhando "{SharingTargetName}" pela internet."
         : "Escolha o destino e a tela que deseja transmitir.";
 
     public bool IsNotSharing => !IsSharing;
     public bool IsShareSection => ActiveSection == "share";
-    public bool IsSessionSection => ActiveSection == "session";
     public bool IsDevicesSection => ActiveSection == "devices";
     public bool IsSettingsSection => ActiveSection == "settings";
 
@@ -74,6 +74,19 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     {
         OnPropertyChanged(nameof(SharingStatus));
         OnPropertyChanged(nameof(PauseActionText));
+        PauseChanged?.Invoke(value);
+    }
+
+    partial void OnIsViewerConnectedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ViewerCountText));
+        OnPropertyChanged(nameof(ViewerStatus));
+        OnPropertyChanged(nameof(ViewerDetail));
+    }
+
+    partial void OnSharingTargetNameChanged(string value)
+    {
+        OnPropertyChanged(nameof(PreviewHint));
     }
 
     partial void OnSelectedFriendChanged(Friend? value)
@@ -84,7 +97,6 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     partial void OnActiveSectionChanged(string value)
     {
         OnPropertyChanged(nameof(IsShareSection));
-        OnPropertyChanged(nameof(IsSessionSection));
         OnPropertyChanged(nameof(IsDevicesSection));
         OnPropertyChanged(nameof(IsSettingsSection));
     }
@@ -124,6 +136,8 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     public event Action<Friend>? StartShareRequested;
     public event Action?         StopShareRequested;
     public event Action?         LogoutRequested;
+    /// <summary>Fired whenever IsPaused changes; passes the new paused state.</summary>
+    public event Action<bool>?   PauseChanged;
 
     [RelayCommand]
     public async Task LoadAsync()
@@ -172,25 +186,15 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
         IsPaused = !IsPaused;
     }
 
-    [RelayCommand]
-    private void CopyInvite()
-    {
-        try
-        {
-            Clipboard.SetText(SessionLink);
-            StatusMessage = "Convite copiado.";
-        }
-        catch
-        {
-            StatusMessage = SessionLink;
-        }
-    }
-
     [RelayCommand] private void ShowShare() => ActiveSection = "share";
-    [RelayCommand] private void ShowSession() => ActiveSection = "session";
     [RelayCommand] private void ShowDevices() => ActiveSection = "devices";
     [RelayCommand] private void ShowSettings() => ActiveSection = "settings";
     [RelayCommand] private void Logout() => LogoutRequested?.Invoke();
+
+    public void SetViewerConnected(bool connected)
+    {
+        IsViewerConnected = connected;
+    }
 
     public void OnSharingStarted(ShareTarget target)
     {
@@ -201,6 +205,8 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
         PacketLossPermille = 0;
         EncoderBitrateKbps = GetRecommendedBitrateKbps(target.ResolutionHeight);
         IsPaused = false;
+        IsViewerConnected = false;
+        SharingTargetName = target.DisplayName ?? string.Empty;
         IsSharing = true;
     }
 
@@ -208,6 +214,8 @@ public partial class FriendsViewModel(ApiService api, SignalingService _) : Obse
     {
         IsSharing = false;
         IsPaused = false;
+        IsViewerConnected = false;
+        SharingTargetName = string.Empty;
         CurrentUploadKbps = 0;
         CurrentLatencyMs = 0;
         PacketLossPermille = 0;
